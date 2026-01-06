@@ -1,7 +1,7 @@
-#include "hardware.cpp"
-#include "story.cpp"
-#include "map.cpp"
+#include "hardware.h"
+#include "map.h"
 #include "utils.h"
+#include "story.h"
 
 void setup() {
     Serial.begin(9600);

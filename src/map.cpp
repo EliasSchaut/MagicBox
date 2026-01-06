@@ -1,8 +1,8 @@
-#include "types.h"
+#include "map.h"
 
 bool minigame_not_finished = true;
 
-const Position position = Position(0, 0);
+Position position = Position(0, 0);
 
 void mapWalk() {
   Direction moveDir = readJoystrickDirection();

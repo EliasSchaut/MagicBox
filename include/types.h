@@ -5,6 +5,8 @@
 #ifndef MAGICBOX_TYPES_H
 #define MAGICBOX_TYPES_H
 
+#include <Arduino.h>
+
 enum class Direction { UP, DOWN, LEFT, RIGHT, NONE };
 
 struct Position {

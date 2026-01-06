@@ -1,16 +1,15 @@
-#include "types.h"
+#include "story.h"
+
 // -----------------
 // Classes & Globals
 // -----------------
-const StoryNode* currentNode = nullptr;
+StoryNode* currentNode = nullptr;
 // -----------------
 
 
 // -----------------
 // Content
 // -----------------
-extern StoryNode startNode, forestNode, caveNode;
-
 StoryNode startNode = {
   "You are in a room. A) Door B) Window", 
   0, &forestNode, &caveNode, nullptr, nullptr 
