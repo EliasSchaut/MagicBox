@@ -12,9 +12,7 @@ enum class Direction { UP, DOWN, LEFT, RIGHT, NONE };
 struct Position {
     int x;
     int y;
-
     Position(int xPos = 0, int yPos = 0) : x(xPos), y(yPos) {};
-
     void move(Direction dir) {
         switch (dir) {
             case Direction::UP:
@@ -35,7 +33,7 @@ struct Position {
     };
 };
 
-enum class Choice {  A,  B,  C,  D, NONE };
+enum class Choice {  A = 'A',  B = 'B',  C = 'C',  D = 'D', NONE = '\0' };
 
 struct StoryNode {
     const char* display;

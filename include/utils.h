@@ -8,21 +8,18 @@
 
 #include "types.h"
 
+inline Choice charToChoice(char key) {
+    if (key == 'A' || key == 'B' || key == 'C' || key == 'D') {
+        return static_cast<Choice>(key);
+    }
+    return Choice::NONE;
+}
+
 inline void printSerial(const char* output) {
     Serial.println(F("\n--------------------------------"));
     Serial.println(output);
     Serial.println();
     Serial.println();
-}
-
-inline Choice charToChoice(char key) {
-    switch(key) {
-        case 'A': return Choice::A;
-        case 'B': return Choice::B;
-        case 'C': return Choice::C;
-        case 'D': return Choice::D;
-        default:  return Choice::NONE;
-    }
 }
 
 inline void printDirection(Direction dir) {

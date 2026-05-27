@@ -1,17 +1,9 @@
-#include "hardware.h"
-#include "map.h"
-#include "utils.h"
-#include "story.h"
+#include "main.h"
 
 void setup() {
     Serial.begin(9600);
     setupHardware();
-    //printIntro();
-}
-
-void handleInput(char key) {
-    Choice choice = charToChoice(key);
-    return handleChoice(choice);
+    storyBegin();
 }
 
 void loop() {
@@ -21,4 +13,9 @@ void loop() {
     if (choice){
         handleInput(choice);
     }
+}
+
+void handleInput(char key) {
+    Choice choice = charToChoice(key);
+    return handleChoice(choice);
 }

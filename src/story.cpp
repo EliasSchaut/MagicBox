@@ -3,7 +3,7 @@
 // -----------------
 // Classes & Globals
 // -----------------
-StoryNode* currentNode = nullptr;
+StoryGraph storyGraph;
 // -----------------
 
 
@@ -12,38 +12,65 @@ StoryNode* currentNode = nullptr;
 // -----------------
 StoryNode startNode = {
   "You are in a room. A) Door B) Window", 
-  0, &forestNode, &caveNode, nullptr, nullptr 
+  0, nullptr, nullptr, nullptr, nullptr 
 };
 
 StoryNode forestNode = {
   "The forest is dark. A) Walk B) Go back", 
-  1, &forestNode, &startNode, nullptr, nullptr 
+  1, nullptr, nullptr, nullptr, nullptr 
 };
 
 StoryNode caveNode = {
   "It's a smelly cave. B) Go back", 
-  2, &caveNode, &startNode, nullptr, nullptr 
+  2, nullptr, nullptr, nullptr, nullptr 
 };
 // -----------------
 
 
 // -----------------
-// Handler
+// StoryGraph Implementation
 // -----------------
-void printCurrent() {
-  printSerial(currentNode->display);
-};
+StoryGraph::StoryGraph() : nodes{}, nodeCount(0), currentNode(nullptr) {}
 
-void printIntro() {
-  currentNode = &startNode;
-  printCurrent();
-};
+void StoryGraph::addNode(StoryNode* node) {
+  if (nodeCount < 20) {
+    nodes[nodeCount++] = node;
+  }
+}
 
-void printWrongChoice() {
-  printSerial("You can't make this choice");
-};
+StoryNode* StoryGraph::findNodeByID(int id) {
+  for (int i = 0; i < nodeCount; i++) {
+    if (nodes[i]->gameStateID == id) {
+      return nodes[i];
+    }
+  }
+  return nullptr;
+}
 
-void handleChoice(Choice choice) {
+void StoryGraph::connectNodes(int fromID, Choice choice, int toID) {
+  StoryNode* fromNode = findNodeByID(fromID);
+  StoryNode* toNode = findNodeByID(toID);
+
+  if (fromNode && toNode) {
+    switch (choice) {
+      case Choice::A: fromNode->a = toNode; break;
+      case Choice::B: fromNode->b = toNode; break;
+      case Choice::C: fromNode->c = toNode; break;
+      case Choice::D: fromNode->d = toNode; break;
+      default: break;
+    }
+  }
+}
+
+void StoryGraph::jumpToNode(int stateID) {
+  StoryNode* node = findNodeByID(stateID);
+  if (node) {
+    currentNode = node;
+    printSerial(currentNode->display);
+  }
+}
+
+void StoryGraph::handleChoice(Choice choice) {
   StoryNode* nextNode = nullptr;
 
   switch(choice) {
@@ -60,5 +87,42 @@ void handleChoice(Choice choice) {
   } else {
     printWrongChoice();
   }
+}
+// -----------------
+
+
+// -----------------
+// Handler
+// -----------------
+void printCurrent() {
+  if (storyGraph.getCurrentNode()) {
+    printSerial(storyGraph.getCurrentNode()->display);
+  }
 };
+
+void storyBegin() {
+  storyGraph.addNode(&startNode);
+  storyGraph.addNode(&forestNode);
+  storyGraph.addNode(&caveNode);
+
+  storyGraph.connectNodes(0, Choice::A, 1);
+  storyGraph.connectNodes(0, Choice::B, 2);
+  storyGraph.connectNodes(1, Choice::A, 1);
+  storyGraph.connectNodes(1, Choice::B, 0);
+  storyGraph.connectNodes(2, Choice::B, 0);
+
+  storyGraph.jumpToNode(0);
+};
+
+void printWrongChoice() {
+  printSerial("You can't make this choice");
+};
+
+void handleChoice(Choice choice) {
+  storyGraph.handleChoice(choice);
+};
+
+void setGameState(int state) {
+  storyGraph.jumpToNode(state);
+}
 // -----------------
