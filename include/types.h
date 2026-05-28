@@ -44,22 +44,29 @@ struct MapTarget {
 struct StoryNode;
 
 // StoryNode is a plain aggregate authored with designated initializers.
-// avr-gcc 7's caveat: you cannot SKIP a field in the middle of a designated
-// initializer list, but you CAN skip trailing fields (they get zero-initialized
-// → nullptr / false / 0).
+// avr-gcc 7's caveat: a designated initializer must set a CONTIGUOUS PREFIX of
+// the fields (in declaration order, no gaps). Trailing fields may be omitted
+// and are zero-initialized (→ nullptr / false / 0).
 //
 // So the field order is chosen so the most common scenarios trail-skip cleanly:
+//   - "merge / auto-advance"         → set .next, trail-skip
 //   - "just choices"                 → set up to .choiceD, trail-skip
 //   - "choices + map"                → set up to .mapTargets, trail-skip
 //   - "choices + map + pin"          → set up to .pinSuccess, trail-skip
 //   - anything fancier               → use .onEnter (custom callback)
 //
-// Use the helper macros below (CHOICES, MAP_TARGETS, MAP_OFF, ...) so you
+// Use the helper macros below (GOTO, CHOICES, MAP_TARGETS, MAP_OFF, ...) so you
 // don't have to manually fill the gap with nullptr/0/false when you want to
 // reach a later field.
 struct StoryNode {
     int id;
     const char* display;
+
+    // Direct transition: if non-null, after this node's display text (and map
+    // config / onEnter) is shown, the engine immediately continues to `next`
+    // without waiting for input. Used to merge several branches back together.
+    // Authored via GOTO(node); CHOICES(...) sets it to nullptr automatically.
+    StoryNode* next;
 
     // Choices — nullptr = invalid choice.
     StoryNode* choiceA;
@@ -86,9 +93,17 @@ struct StoryNode {
 
 // ----- Authoring helpers ---------------------------------------------------
 
+// Direct transition / merge node: show this node's display text, then continue
+// straight to `node` (no input needed). Place right after .display; the rest of
+// the fields trail-skip. Example:
+//   StoryNode mergeNode = { .id = 9, .display = "Paths converge.", GOTO(&hubNode) };
+#define GOTO(node) .next = (node)
+
 // All four choices at once. Pass nullptr where there is no transition.
+// Implicitly sets .next = nullptr (so it stays a contiguous prefix and the node
+// waits for input instead of auto-advancing).
 #define CHOICES(a, b, c, d) \
-    .choiceA = (a), .choiceB = (b), .choiceC = (c), .choiceD = (d)
+    .next = nullptr, .choiceA = (a), .choiceB = (b), .choiceC = (c), .choiceD = (d)
 
 // Short-hand: no choices at all (e.g. dead-end intermediate node).
 #define NO_CHOICES CHOICES(nullptr, nullptr, nullptr, nullptr)

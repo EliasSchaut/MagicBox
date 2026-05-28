@@ -44,8 +44,16 @@ StoryNode safeNode = {
 
 StoryNode treasureNode = {
     .id = 4,
-    .display = "The safe pops open. You found gold! A) Back to room",
-    CHOICES(&startNode, nullptr, nullptr, nullptr),
+    .display = "The safe pops open. You found gold! A) Leave",
+    CHOICES(&leaveNode, nullptr, nullptr, nullptr),
+};
+
+// Direct-transition (merge) node: shows its line, then auto-advances to
+// startNode without waiting for input.
+StoryNode leaveNode = {
+    .id = 5,
+    .display = "You pocket the gold and head back...",
+    GOTO(&startNode),
 };
 // -----------------
 
@@ -67,25 +75,33 @@ StoryNode* StoryGraph::findNodeByID(int id) {
 }
 
 void StoryGraph::enterNode(StoryNode* node) {
-  currentNode = node;
+  // `next` chains let a node auto-advance to another after showing its text.
+  // Loop instead of recursing, with a guard against cyclic `next` pointers.
+  int guard = 0;
+  while (node && guard++ < 64) {
+    currentNode = node;
 
-  // Default after every transition: map off. The declarative config below
-  // (and/or onEnter) may turn it back on.
-  mapDisable();
+    // Default after every transition: map off. The declarative config below
+    // (and/or onEnter) may turn it back on.
+    mapDisable();
 
-  printSerial(node->display);
+    printSerial(node->display);
 
-  // Apply declarative map config.
-  if (node->mapTargets) {
-    for (int i = 0; i < node->mapTargetCount; i++) {
-      const MapTarget& t = node->mapTargets[i];
-      mapSetTarget(t.x, t.y, t.storyID);
+    // Apply declarative map config.
+    if (node->mapTargets) {
+      for (int i = 0; i < node->mapTargetCount; i++) {
+        const MapTarget& t = node->mapTargets[i];
+        mapSetTarget(t.x, t.y, t.storyID);
+      }
     }
-  }
-  if (node->activateMap) mapEnable();
+    if (node->activateMap) mapEnable();
 
-  // Escape hatch (e.g. mapTeleportPlayer(...)).
-  if (node->onEnter) node->onEnter();
+    // Escape hatch (e.g. mapTeleportPlayer(...)).
+    if (node->onEnter) node->onEnter();
+
+    // Direct transition: continue to `next` without waiting for input.
+    node = node->next;
+  }
 }
 
 void StoryGraph::jumpToNode(int id) {
@@ -137,6 +153,7 @@ void storyBegin() {
   storyGraph.addNode(&caveNode);
   storyGraph.addNode(&safeNode);
   storyGraph.addNode(&treasureNode);
+  storyGraph.addNode(&leaveNode);
 
   storyGraph.jumpToNode(0);
 }

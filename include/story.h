@@ -25,7 +25,7 @@ private:
     void enterNode(StoryNode* node);
 };
 
-extern StoryNode startNode, forestNode, caveNode, safeNode, treasureNode;
+extern StoryNode startNode, forestNode, caveNode, safeNode, treasureNode, leaveNode;
 extern StoryGraph storyGraph;
 
 void printCurrent();

@@ -1,0 +1,1441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>MagicBox Story Editor</title>
+<!--
+  Standalone visual editor for MagicBox StoryNodes.
+  Workflow:
+    1. Edit nodes here — pan/zoom, drag boxes, drag from output ports to target
+       nodes to wire choices / PIN-success / map targets.
+    2. Export JSON  → saves the editor state (incl. positions). Use Import to
+       resume later.
+    3. Export C++   → produces the literals + storyBegin() body. Paste them
+       into story.cpp (replacing the Content section + storyBegin) and update
+       the `extern StoryNode ...;` line in story.h accordingly.
+    4. Build with PlatformIO as usual.
+
+  Auto-saves to localStorage on every change.
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { darkMode: 'class' };
+</script>
+<!-- highlight.js for the onEnter C++ code editor. Two themes; we toggle them
+     with dark mode by flipping their `disabled` flag (see applyDark). -->
+<link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link id="hljs-dark"  rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" disabled>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js"></script>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { overscroll-behavior: none; font-family: ui-sans-serif, system-ui, sans-serif; }
+
+  .viewport {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    cursor: grab;
+    background-color: #f8fafc;
+    background-image: radial-gradient(circle, rgba(100,116,139,0.3) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .dark .viewport {
+    background-color: #0f172a;
+    background-image: radial-gradient(circle, rgba(148,163,184,0.18) 1px, transparent 1px);
+  }
+  .viewport.panning { cursor: grabbing; }
+
+  .world {
+    position: absolute;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+
+  .node {
+    position: absolute;
+    width: 280px;
+    background: white;
+    border: 2px solid #cbd5e1;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    user-select: none;
+    overflow: visible;
+  }
+  .dark .node {
+    background: #1e293b;
+    border-color: #475569;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .node.selected {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59,130,246,0.35), 0 4px 12px rgba(0,0,0,0.12);
+  }
+  .node.start { border-color: #16a34a; }
+  .node.start.selected {
+    border-color: #16a34a;
+    box-shadow: 0 0 0 2px rgba(22,163,74,0.35), 0 4px 12px rgba(0,0,0,0.12);
+  }
+
+  .node-header {
+    padding: 6px 12px;
+    cursor: grab;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .dark .node-header { border-color: #334155; }
+  .node-header:active { cursor: grabbing; }
+
+  .port {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #94a3b8;
+    border: 2px solid white;
+    cursor: crosshair;
+    flex-shrink: 0;
+    transition: transform 0.1s, background 0.1s;
+  }
+  .dark .port { border-color: #1e293b; }
+  .port:hover { background: #3b82f6; transform: scale(1.3); }
+  .port.connected { background: #3b82f6; }
+  .port.input {
+    position: absolute;
+    left: -9px;
+    top: 16px;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 12px;
+    font-size: 0.8125rem;
+    gap: 6px;
+  }
+  .row .meta {
+    color: #64748b;
+    font-style: italic;
+    font-size: 0.7rem;
+    flex: 1;
+    min-width: 0;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .dark .row .meta { color: #94a3b8; }
+
+  .connections-svg {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1px;
+    height: 1px;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .conn-line {
+    fill: none;
+    stroke-width: 2;
+    pointer-events: stroke;
+  }
+  .conn-line.choice { stroke: #64748b; }
+  .conn-line.pin    { stroke: #f97316; }
+  .conn-line.map    { stroke: #10b981; }
+  .conn-line.next   { stroke: #8b5cf6; stroke-dasharray: 7,4; }
+  .dark .conn-line.choice { stroke: #94a3b8; }
+
+  .props input,
+  .props textarea {
+    width: 100%;
+    padding: 4px 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    background: white;
+    font-size: 0.8125rem;
+  }
+  .dark .props input,
+  .dark .props textarea {
+    background: #0f172a;
+    border-color: #475569;
+    color: #f1f5f9;
+  }
+  .props textarea { resize: vertical; min-height: 70px; }
+  .props input[type="checkbox"] { width: auto; }
+
+  /* ----- Syntax-highlighted code editor (overlay technique) ----- */
+  .code-editor {
+    position: relative;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    overflow: hidden;
+    background: white;
+  }
+  .dark .code-editor { background: #0f172a; border-color: #475569; }
+  .code-editor pre,
+  .code-editor textarea {
+    margin: 0;
+    padding: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    tab-size: 2;
+    white-space: pre;
+    word-wrap: normal;
+  }
+  .code-editor pre {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    overflow: hidden;       /* scroll synced from textarea via JS */
+    pointer-events: none;
+    z-index: 0;
+  }
+  .code-editor pre code {
+    font: inherit;
+    background: none !important;
+    padding: 0;
+    display: block;
+  }
+  .code-editor textarea {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 180px;
+    resize: vertical;
+    overflow: auto;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: transparent;     /* text shown by the highlighted <pre> behind */
+    caret-color: #0f172a;
+    z-index: 1;
+  }
+  .dark .code-editor textarea { caret-color: #f1f5f9; }
+  .code-editor textarea::selection { background: rgba(59,130,246,0.3); }
+</style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+
+<!-- ============================================================
+     Sticky Navbar
+     ============================================================ -->
+<nav class="fixed top-0 inset-x-0 z-50 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-3 py-2 flex items-center gap-2 shadow-sm">
+  <h1 class="font-bold mr-2">MagicBox Story Editor</h1>
+  <button onclick="addNode()" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded">+ Node</button>
+  <input type="file" id="import-file" accept=".json" class="hidden" onchange="handleImport(event)" />
+  <button onclick="document.getElementById('import-file').click()" class="px-3 py-1 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-sm rounded">Import JSON</button>
+  <button onclick="exportJson()" class="px-3 py-1 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-sm rounded">Export JSON</button>
+  <button onclick="exportCpp()" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded">Export C++</button>
+  <button onclick="clearAll()" class="px-3 py-1 bg-slate-200 hover:bg-red-200 dark:bg-slate-700 dark:hover:bg-red-900 text-sm rounded">Clear</button>
+  <div class="flex-1"></div>
+  <span id="status" class="text-xs text-slate-500 dark:text-slate-400"></span>
+  <button onclick="tidy()" class="px-3 py-1 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 text-sm rounded" title="Auto-arrange nodes">Tidy</button>
+  <button onclick="zoomReset()" class="px-3 py-1 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 text-sm rounded">Fit</button>
+  <button onclick="toggleDark()" class="px-3 py-1 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 text-sm rounded">🌓</button>
+</nav>
+
+<!-- ============================================================
+     Pan/Zoom Viewport
+     ============================================================ -->
+<div id="viewport" class="viewport" style="top: 49px;">
+  <div id="world" class="world">
+    <svg id="connections" class="connections-svg"></svg>
+    <div id="nodes-container"></div>
+  </div>
+  <!-- empty-state hint -->
+  <div id="empty-hint" class="absolute inset-0 flex items-center justify-center pointer-events-none text-slate-400 dark:text-slate-500 text-sm">
+    Click <span class="mx-1 px-2 py-0.5 bg-blue-600 text-white rounded">+ Node</span>
+    or double-click anywhere to add a node. Pan with click+drag. Zoom with scroll wheel.
+  </div>
+</div>
+
+<!-- ============================================================
+     Properties Panel
+     ============================================================ -->
+<aside id="props" class="props hidden fixed right-0 bottom-0 w-96 bg-white dark:bg-slate-800 border-l border-slate-200 dark:border-slate-700 p-4 overflow-y-auto z-40 shadow-lg" style="top: 49px;"></aside>
+
+<!-- ============================================================
+     Code Modal (used for JSON & C++ exports)
+     ============================================================ -->
+<div id="modal" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-800 rounded-lg w-full max-w-3xl max-h-[80vh] flex flex-col p-4 gap-2">
+    <div class="flex items-center justify-between">
+      <h2 class="font-bold" id="modal-title">Export</h2>
+      <button onclick="closeModal()" class="px-2 py-1 bg-slate-200 dark:bg-slate-700 rounded">✕</button>
+    </div>
+    <textarea id="modal-content" class="flex-1 font-mono text-xs bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded p-2 resize-none" readonly></textarea>
+    <div class="flex gap-2 justify-end">
+      <button onclick="copyModal()" class="px-3 py-1 bg-blue-600 text-white rounded text-sm">Copy</button>
+      <button onclick="downloadModal()" class="px-3 py-1 bg-emerald-600 text-white rounded text-sm">Download</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+const state = {
+  nodes: [],                          // [{id, name, x, y, display, choices:{A,B,C,D}, activateMap, mapTargets:[{x,y,target}], expectedPin, pinSuccess, onEnter}]
+  startNodeId: null,
+  selectedNodeId: null,
+  view: { panX: 0, panY: 0, zoom: 1 },
+  darkMode: false,
+};
+
+let drag = null;                      // {kind: 'pan'|'node'|'connection', ...}
+let nextNodeIdCounter = 0;
+
+// ============================================================
+// Init / persistence
+// ============================================================
+function init() {
+  load();
+  setupEvents();
+  applyDark();
+  render();
+}
+
+function load() {
+  const raw = localStorage.getItem('magicbox-editor');
+  if (raw) {
+    try {
+      const data = JSON.parse(raw);
+      state.nodes      = data.nodes      ?? [];
+      state.startNodeId= data.startNodeId?? null;
+      state.view       = data.view       ?? state.view;
+      state.darkMode   = data.darkMode   ?? false;
+    } catch (_) {}
+  }
+  state.nodes.forEach(migrateNode);
+  refreshIdCounter();
+}
+
+// Backfill fields added in later versions so older saves keep working.
+function migrateNode(n) {
+  if (!n.choicesEnabled) {
+    // Pre-"enabled choices" save: a choice is enabled iff it had a target.
+    n.choicesEnabled = {
+      A: n.choices?.A != null,
+      B: n.choices?.B != null,
+      C: n.choices?.C != null,
+      D: n.choices?.D != null,
+    };
+  }
+  if (n.next === undefined) n.next = null;
+  if (n.nextEnabled === undefined) n.nextEnabled = n.next != null;
+}
+
+function refreshIdCounter() {
+  nextNodeIdCounter = state.nodes.length === 0
+    ? 0
+    : Math.max(...state.nodes.map(n => n.id)) + 1;
+}
+
+function persist() {
+  localStorage.setItem('magicbox-editor', JSON.stringify({
+    nodes: state.nodes,
+    startNodeId: state.startNodeId,
+    view: state.view,
+    darkMode: state.darkMode,
+  }));
+  updateStatus(`${state.nodes.length} node${state.nodes.length === 1 ? '' : 's'} · auto-saved`);
+}
+
+function updateStatus(msg) {
+  const el = document.getElementById('status');
+  if (el) el.textContent = msg;
+}
+
+// ============================================================
+// Node operations
+// ============================================================
+function makeNode(x, y) {
+  const id = nextNodeIdCounter++;
+  return {
+    id,
+    name: id === 0 ? 'startNode' : `node${id}`,
+    x, y,
+    display: 'New node text',
+    choices: { A: null, B: null, C: null, D: null },
+    choicesEnabled: { A: false, B: false, C: false, D: false },
+    next: null,            // direct-transition target id
+    nextEnabled: false,    // auto-advance after display
+    activateMap: false,
+    mapTargets: [],
+    expectedPin: '',
+    pinSuccess: null,
+    onEnter: '',
+  };
+}
+
+function addNode(worldX, worldY) {
+  let x, y;
+  if (worldX !== undefined) {
+    x = worldX; y = worldY;
+  } else {
+    const r = document.getElementById('viewport').getBoundingClientRect();
+    x = (r.width / 2 - state.view.panX) / state.view.zoom - 140;
+    y = (r.height / 2 - state.view.panY) / state.view.zoom - 80;
+  }
+  const node = makeNode(x, y);
+  state.nodes.push(node);
+  if (state.startNodeId === null) state.startNodeId = node.id;
+  state.selectedNodeId = node.id;
+  render();
+  persist();
+}
+
+function deleteNode(id) {
+  if (!confirm('Delete this node?')) return;
+  state.nodes = state.nodes.filter(n => n.id !== id);
+  for (const n of state.nodes) {
+    for (const k of ['A','B','C','D']) {
+      if (n.choices[k] === id) n.choices[k] = null;
+    }
+    if (n.pinSuccess === id) n.pinSuccess = null;
+    if (n.next === id) n.next = null;
+    n.mapTargets = n.mapTargets.filter(t => t.target !== id);
+  }
+  if (state.startNodeId === id) state.startNodeId = state.nodes[0]?.id ?? null;
+  if (state.selectedNodeId === id) state.selectedNodeId = null;
+  render();
+  persist();
+}
+
+function getNode(id) {
+  return state.nodes.find(n => n.id === id);
+}
+
+function clearAll() {
+  if (!confirm('Delete ALL nodes?')) return;
+  state.nodes = [];
+  state.startNodeId = null;
+  state.selectedNodeId = null;
+  nextNodeIdCounter = 0;
+  render();
+  persist();
+}
+
+// ============================================================
+// Render
+// ============================================================
+function render() {
+  renderWorld();
+  renderProps();
+}
+
+// Re-render everything except the props panel. Used by oninput handlers so
+// the focused input/textarea isn't ripped out of the DOM mid-typing.
+function renderWorld() {
+  document.getElementById('world').style.transform =
+    `translate(${state.view.panX}px, ${state.view.panY}px) scale(${state.view.zoom})`;
+
+  document.getElementById('empty-hint').style.display =
+    state.nodes.length === 0 ? '' : 'none';
+
+  const container = document.getElementById('nodes-container');
+  container.innerHTML = '';
+  for (const n of state.nodes) container.appendChild(renderNode(n));
+  void container.offsetWidth;   // flush layout
+
+  renderConnections();
+}
+
+function renderNode(node) {
+  const el = document.createElement('div');
+  el.className = 'node';
+  if (state.selectedNodeId === node.id) el.classList.add('selected');
+  if (state.startNodeId    === node.id) el.classList.add('start');
+  el.style.left = node.x + 'px';
+  el.style.top  = node.y + 'px';
+  el.dataset.nodeId = node.id;
+
+  // Input port (drop target)
+  const ip = document.createElement('div');
+  ip.className = 'port input';
+  ip.dataset.input = node.id;
+  el.appendChild(ip);
+
+  // Header (drag handle)
+  const header = document.createElement('div');
+  header.className = 'node-header';
+  header.dataset.dragHandle = '1';
+  header.innerHTML = `
+    <span class="text-xs font-mono text-slate-500 dark:text-slate-400">#${node.id}</span>
+    <span class="font-semibold text-sm flex-1 truncate">${esc(node.name)}</span>
+    ${state.startNodeId === node.id ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500 text-white">START</span>' : ''}
+  `;
+  el.appendChild(header);
+
+  // Display preview
+  const body = document.createElement('div');
+  body.className = 'px-3 py-2 text-xs text-slate-600 dark:text-slate-300 italic';
+  body.textContent = node.display.length > 90 ? node.display.slice(0, 90) + '…' : node.display;
+  el.appendChild(body);
+
+  // Direct transition (auto-advance) — shown when enabled.
+  if (node.nextEnabled) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const t = node.next;
+    const tname = t !== null ? (getNode(t)?.name ?? `#${t}`) : '';
+    row.innerHTML = `
+      <span class="text-violet-500 text-[11px]">⏭ auto</span>
+      <span class="meta">${t !== null ? '→ ' + esc(tname) : '—'}</span>
+    `;
+    const p = document.createElement('div');
+    p.className = 'port';
+    if (t !== null) p.classList.add('connected');
+    p.dataset.outNode = node.id;
+    p.dataset.outKind = 'next';
+    row.appendChild(p);
+    el.appendChild(row);
+  }
+
+  // Choices A-D — only the enabled ones get a row + output port.
+  for (const k of ['A','B','C','D']) {
+    if (!node.choicesEnabled?.[k]) continue;
+    const row = document.createElement('div');
+    row.className = 'row';
+    const t = node.choices[k];
+    const tname = t !== null ? (getNode(t)?.name ?? `#${t}`) : '';
+    row.innerHTML = `
+      <span class="font-mono font-bold w-3.5">${k})</span>
+      <span class="meta">${t !== null ? '→ ' + esc(tname) : '—'}</span>
+    `;
+    const p = document.createElement('div');
+    p.className = 'port';
+    if (t !== null) p.classList.add('connected');
+    p.dataset.outNode = node.id;
+    p.dataset.outKind = 'choice';
+    p.dataset.outKey  = k;
+    row.appendChild(p);
+    el.appendChild(row);
+  }
+
+  // PIN section
+  if (node.expectedPin) {
+    const row = document.createElement('div');
+    row.className = 'row border-t border-slate-200 dark:border-slate-700 mt-1 pt-2';
+    const t = node.pinSuccess;
+    const tname = t !== null ? (getNode(t)?.name ?? `#${t}`) : '';
+    row.innerHTML = `
+      <span class="text-orange-500">🔒</span>
+      <span class="font-mono text-[11px]">"${esc(node.expectedPin)}"</span>
+      <span class="meta">${t !== null ? '→ ' + esc(tname) : '—'}</span>
+    `;
+    const p = document.createElement('div');
+    p.className = 'port';
+    if (t !== null) p.classList.add('connected');
+    p.dataset.outNode = node.id;
+    p.dataset.outKind = 'pin';
+    row.appendChild(p);
+    el.appendChild(row);
+  }
+
+  // Map section
+  if (node.activateMap || node.mapTargets.length > 0) {
+    const hdr = document.createElement('div');
+    hdr.className = 'row border-t border-slate-200 dark:border-slate-700 mt-1 pt-2';
+    hdr.innerHTML = `<span class="text-emerald-600 dark:text-emerald-400 text-xs">🗺 Map ${node.activateMap ? '(on)' : '(off)'}</span><span></span>`;
+    el.appendChild(hdr);
+    for (let i = 0; i < node.mapTargets.length; i++) {
+      const t = node.mapTargets[i];
+      const row = document.createElement('div');
+      row.className = 'row';
+      const tname = t.target !== null ? (getNode(t.target)?.name ?? `#${t.target}`) : '';
+      row.innerHTML = `
+        <span class="font-mono text-[11px]">(${t.x},${t.y})</span>
+        <span class="meta">${t.target !== null ? '→ ' + esc(tname) : '—'}</span>
+      `;
+      const p = document.createElement('div');
+      p.className = 'port';
+      if (t.target !== null) p.classList.add('connected');
+      p.dataset.outNode = node.id;
+      p.dataset.outKind = 'map';
+      p.dataset.outIdx  = i;
+      row.appendChild(p);
+      el.appendChild(row);
+    }
+  }
+
+  // onEnter hint
+  if (node.onEnter && node.onEnter.trim()) {
+    const row = document.createElement('div');
+    row.className = 'row border-t border-slate-200 dark:border-slate-700 mt-1 pt-2';
+    const lineCount = node.onEnter.trim().split('\n').length;
+    row.innerHTML = `<span class="text-purple-500 text-[11px]">⚡ onEnter { ${lineCount} line${lineCount === 1 ? '' : 's'} }</span><span></span>`;
+    el.appendChild(row);
+  }
+
+  // bottom pad
+  const pad = document.createElement('div');
+  pad.style.height = '6px';
+  el.appendChild(pad);
+
+  return el;
+}
+
+// ============================================================
+// Connections (SVG bezier paths in world coords)
+// ============================================================
+function renderConnections() {
+  const svg = document.getElementById('connections');
+  svg.innerHTML = '';
+  const lines = [];
+  for (const node of state.nodes) {
+    if (node.nextEnabled && node.next !== null) {
+      lines.push({ nodeId: node.id, kind: 'next', targetId: node.next });
+    }
+    for (const k of ['A','B','C','D']) {
+      if (node.choicesEnabled?.[k] && node.choices[k] !== null) {
+        lines.push({ nodeId: node.id, kind: 'choice', key: k, targetId: node.choices[k] });
+      }
+    }
+    if (node.expectedPin && node.pinSuccess !== null) {
+      lines.push({ nodeId: node.id, kind: 'pin', targetId: node.pinSuccess });
+    }
+    for (let i = 0; i < node.mapTargets.length; i++) {
+      const t = node.mapTargets[i];
+      if (t.target !== null) {
+        lines.push({ nodeId: node.id, kind: 'map', idx: i, targetId: t.target });
+      }
+    }
+  }
+  for (const ln of lines) {
+    const fp = portWorldPos(ln);
+    const tn = getNode(ln.targetId);
+    if (!fp || !tn) continue;
+    const tp = inputWorldPos(tn.id);
+    if (!tp) continue;
+    const path = makeBezier(fp.x, fp.y, tp.x, tp.y);
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    el.setAttribute('d', path);
+    el.setAttribute('class', `conn-line ${ln.kind}`);
+    svg.appendChild(el);
+  }
+
+  // Live drag preview
+  if (drag?.kind === 'connection') {
+    const fp = portWorldPos(drag.from);
+    if (fp) {
+      const path = makeBezier(fp.x, fp.y, drag.toX, drag.toY);
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      el.setAttribute('d', path);
+      el.setAttribute('class', `conn-line ${drag.from.kind}`);
+      el.setAttribute('stroke-dasharray', '6,4');
+      svg.appendChild(el);
+    }
+  }
+}
+
+function makeBezier(x1, y1, x2, y2) {
+  const dx = Math.max(50, Math.abs(x2 - x1) / 2);
+  return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+}
+
+function portWorldPos(info) {
+  let selector;
+  if (info.kind === 'choice') {
+    selector = `[data-out-node="${info.nodeId}"][data-out-kind="choice"][data-out-key="${info.key}"]`;
+  } else if (info.kind === 'pin') {
+    selector = `[data-out-node="${info.nodeId}"][data-out-kind="pin"]`;
+  } else if (info.kind === 'next') {
+    selector = `[data-out-node="${info.nodeId}"][data-out-kind="next"]`;
+  } else if (info.kind === 'map') {
+    selector = `[data-out-node="${info.nodeId}"][data-out-kind="map"][data-out-idx="${info.idx}"]`;
+  } else {
+    return null;
+  }
+  const el = document.querySelector(selector);
+  return el ? elementWorldPos(el) : null;
+}
+
+function inputWorldPos(nodeId) {
+  const el = document.querySelector(`[data-input="${nodeId}"]`);
+  return el ? elementWorldPos(el) : null;
+}
+
+function elementWorldPos(el) {
+  const r = el.getBoundingClientRect();
+  const vp = document.getElementById('viewport').getBoundingClientRect();
+  const sx = r.left + r.width / 2;
+  const sy = r.top + r.height / 2;
+  return {
+    x: (sx - vp.left - state.view.panX) / state.view.zoom,
+    y: (sy - vp.top  - state.view.panY) / state.view.zoom,
+  };
+}
+
+// ============================================================
+// Properties panel
+// ============================================================
+function renderProps() {
+  const panel = document.getElementById('props');
+  if (state.selectedNodeId === null) { panel.classList.add('hidden'); return; }
+  const n = getNode(state.selectedNodeId);
+  if (!n) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+  panel.innerHTML = `
+    <div class="flex items-center gap-2 mb-3">
+      <h2 class="font-bold flex-1">Node #${n.id}</h2>
+      <button onclick="setStart(${n.id})" class="px-2 py-1 text-xs rounded ${state.startNodeId === n.id ? 'bg-emerald-600 text-white' : 'bg-slate-200 dark:bg-slate-700'}">⭐ Start</button>
+      <button onclick="deleteNode(${n.id})" class="px-2 py-1 text-xs rounded bg-red-600 text-white">Delete</button>
+    </div>
+
+    <label class="block text-xs font-semibold mb-1">C++ variable name</label>
+    <input type="text" value="${esc(n.name)}" oninput="update(${n.id}, 'name', this.value)" class="mb-3">
+
+    <label class="block text-xs font-semibold mb-1">Game-state ID (used by setGameState / map collisions)</label>
+    <input type="number" value="${n.id}" onchange="updateId(${n.id}, parseInt(this.value))" class="mb-3">
+
+    <label class="block text-xs font-semibold mb-1">Display text (printed on enter)</label>
+    <textarea rows="4" oninput="update(${n.id}, 'display', this.value)" class="mb-3">${esc(n.display)}</textarea>
+
+    <h3 class="font-semibold text-xs mb-2 mt-3 border-t border-slate-200 dark:border-slate-700 pt-3">DIRECT TRANSITION</h3>
+    <label class="flex items-center gap-2 mb-1 text-xs">
+      <input type="checkbox" ${n.nextEnabled ? 'checked' : ''} onchange="toggleNext(${n.id}, this.checked)">
+      <span>Auto-advance to next node after the text</span>
+    </label>
+    ${n.nextEnabled ? `
+      <div class="mb-1 flex items-center gap-2 text-xs">
+        <span class="text-violet-500">⏭</span>
+        ${n.next !== null
+          ? `<span class="flex-1 truncate">→ ${esc(getNode(n.next)?.name ?? `#${n.next}`)}</span>
+             <button onclick="clearNext(${n.id})" class="px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded">✕</button>`
+          : `<span class="flex-1 truncate text-slate-400 italic">— drag from the ⏭ port to a target node</span>`}
+      </div>
+      <p class="text-[11px] text-slate-500 dark:text-slate-400">Overrides choices — when set, the engine continues immediately and any choices are ignored.</p>
+    ` : ''}
+
+    <h3 class="font-semibold text-xs mb-2 mt-3 border-t border-slate-200 dark:border-slate-700 pt-3">CHOICES</h3>
+    <p class="text-[11px] text-slate-500 dark:text-slate-400 mb-2">Enable a choice to show its port on the node, then drag from it to a target.</p>
+    ${['A','B','C','D'].map(k => {
+      const on = !!n.choicesEnabled?.[k];
+      const t = n.choices[k];
+      const tname = t !== null ? (getNode(t)?.name ?? `#${t}`) : '— (drag from port to target node)';
+      return `
+        <div class="mb-1 flex items-center gap-2 text-xs">
+          <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleChoice(${n.id}, '${k}', this.checked)" title="Enable choice ${k}">
+          <span class="font-mono font-bold w-3.5">${k})</span>
+          ${on
+            ? `<span class="flex-1 truncate ${t === null ? 'text-slate-400 italic' : ''}">${esc(tname)}</span>
+               ${t !== null ? `<button onclick="clearChoice(${n.id}, '${k}')" class="px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded">✕</button>` : ''}`
+            : `<span class="flex-1 truncate text-slate-400 italic">disabled</span>`}
+        </div>
+      `;
+    }).join('')}
+
+    <h3 class="font-semibold text-xs mb-2 mt-3 border-t border-slate-200 dark:border-slate-700 pt-3">MAP</h3>
+    <label class="flex items-center gap-2 mb-2 text-xs">
+      <input type="checkbox" ${n.activateMap ? 'checked' : ''} onchange="update(${n.id}, 'activateMap', this.checked)">
+      <span>Activate map on enter</span>
+    </label>
+    <div class="space-y-1 mb-2">
+      ${n.mapTargets.map((t, i) => {
+        const tname = t.target !== null ? (getNode(t.target)?.name ?? `#${t.target}`) : '— drag from port';
+        return `
+          <div class="flex items-center gap-1 text-xs">
+            <span>x</span>
+            <input type="number" min="0" max="7" value="${t.x}" oninput="updTarget(${n.id}, ${i}, 'x', parseInt(this.value)||0)" style="width:3rem">
+            <span>y</span>
+            <input type="number" min="0" max="7" value="${t.y}" oninput="updTarget(${n.id}, ${i}, 'y', parseInt(this.value)||0)" style="width:3rem">
+            <span class="flex-1 truncate text-slate-500 dark:text-slate-400">→ ${esc(tname)}</span>
+            <button onclick="rmTarget(${n.id}, ${i})" class="px-1.5 text-red-500">✕</button>
+          </div>
+        `;
+      }).join('')}
+    </div>
+    <button onclick="addTarget(${n.id})" class="text-xs px-2 py-1 bg-slate-200 dark:bg-slate-700 rounded">+ Map target</button>
+
+    <h3 class="font-semibold text-xs mb-2 mt-3 border-t border-slate-200 dark:border-slate-700 pt-3">PIN</h3>
+    <label class="block text-xs mb-1">Expected PIN (empty = no PIN expected)</label>
+    <input type="text" value="${esc(n.expectedPin || '')}" oninput="update(${n.id}, 'expectedPin', this.value)" placeholder="e.g. 1234" class="mb-2">
+    ${n.expectedPin ? `<p class="text-[11px] text-slate-500 dark:text-slate-400">Drag from PIN port (🔒) on the node to set the success target.</p>` : ''}
+
+    <h3 class="font-semibold text-xs mb-2 mt-3 border-t border-slate-200 dark:border-slate-700 pt-3">onEnter (custom C++)</h3>
+    <p class="text-[11px] text-slate-500 dark:text-slate-400 mb-2">
+      Runs after the map config is applied. Write the function <em>body</em> in C++ — on export it becomes
+      <code>static void onEnter_${esc(cppIdent(n.name))}()</code>. You can call e.g.
+      <code>mapTeleportPlayer(3, 5);</code> or <code>mapSetTarget(...)</code>.
+    </p>
+    <div class="code-editor" id="onenter-editor">
+      <pre aria-hidden="true"><code class="language-cpp"></code></pre>
+      <textarea id="onenter-input" spellcheck="false" wrap="off" placeholder="// optional C++ code, e.g.&#10;mapTeleportPlayer(3, 5);"></textarea>
+    </div>
+  `;
+  wireOnEnterEditor(n);
+}
+
+// ----- onEnter code editor (overlay highlight) -----
+function wireOnEnterEditor(node) {
+  const wrap = document.getElementById('onenter-editor');
+  if (!wrap) return;
+  const ta   = wrap.querySelector('textarea');
+  const code = wrap.querySelector('code');
+
+  ta.value = node.onEnter || '';
+  syncHighlight(ta, code);
+
+  ta.addEventListener('input', () => {
+    node.onEnter = ta.value;
+    syncHighlight(ta, code);
+    renderWorld();   // not renderProps → keep textarea focus
+    persist();
+  });
+  ta.addEventListener('scroll', () => {
+    const pre = code.parentElement;
+    pre.scrollTop  = ta.scrollTop;
+    pre.scrollLeft = ta.scrollLeft;
+  });
+  // Tab inserts two spaces instead of moving focus.
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const s = ta.selectionStart, en = ta.selectionEnd;
+      ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(en);
+      ta.selectionStart = ta.selectionEnd = s + 2;
+      ta.dispatchEvent(new Event('input'));
+    }
+  });
+}
+
+function syncHighlight(ta, code) {
+  const src = ta.value;
+  if (window.hljs) {
+    code.innerHTML = hljs.highlight(src + '\n', { language: 'cpp' }).value;
+  } else {
+    code.textContent = src + '\n';
+  }
+  const pre = code.parentElement;
+  pre.scrollTop  = ta.scrollTop;
+  pre.scrollLeft = ta.scrollLeft;
+}
+
+// Sanitize a node name into a valid C identifier (for onEnter_<name>).
+function cppIdent(name) {
+  let s = String(name || '').replace(/[^A-Za-z0-9_]/g, '_');
+  if (!s || /^[0-9]/.test(s)) s = '_' + s;
+  return s;
+}
+
+// ----- mutations -----
+// `update` is wired to oninput on text fields, so it must NOT rebuild the
+// props panel — that would steal focus from the input mid-keystroke.
+function update(id, field, value) {
+  const n = getNode(id);
+  if (!n) return;
+  n[field] = value;
+  renderWorld();
+  persist();
+}
+
+function updateId(oldId, newId) {
+  if (oldId === newId || isNaN(newId)) return;
+  if (state.nodes.some(n => n.id === newId)) { alert('ID already exists.'); render(); return; }
+  const n = getNode(oldId);
+  n.id = newId;
+  for (const m of state.nodes) {
+    for (const k of ['A','B','C','D']) if (m.choices[k] === oldId) m.choices[k] = newId;
+    if (m.pinSuccess === oldId) m.pinSuccess = newId;
+    if (m.next === oldId) m.next = newId;
+    for (const t of m.mapTargets) if (t.target === oldId) t.target = newId;
+  }
+  if (state.startNodeId    === oldId) state.startNodeId    = newId;
+  if (state.selectedNodeId === oldId) state.selectedNodeId = newId;
+  refreshIdCounter();
+  render();
+  persist();
+}
+
+function toggleChoice(id, k, enabled) {
+  const n = getNode(id);
+  if (!n) return;
+  n.choicesEnabled[k] = enabled;
+  if (!enabled) n.choices[k] = null;   // disabling drops the connection
+  render();
+  persist();
+}
+function clearChoice(id, k) { getNode(id).choices[k] = null; render(); persist(); }
+function toggleNext(id, enabled) {
+  const n = getNode(id);
+  if (!n) return;
+  n.nextEnabled = enabled;
+  if (!enabled) n.next = null;
+  render();
+  persist();
+}
+function clearNext(id) { getNode(id).next = null; render(); persist(); }
+function addTarget(id)      { getNode(id).mapTargets.push({ x: 0, y: 0, target: null }); render(); persist(); }
+function rmTarget(id, i)    { getNode(id).mapTargets.splice(i, 1); render(); persist(); }
+function updTarget(id, i, field, val) {
+  const t = getNode(id).mapTargets[i];
+  if (!t) return;
+  t[field] = Math.max(0, Math.min(7, val));
+  renderWorld();    // skip props re-render to preserve input focus
+  persist();
+}
+function setStart(id) { state.startNodeId = id; render(); persist(); }
+
+// ============================================================
+// Events: pan, zoom, node drag, connection drag
+// ============================================================
+function setupEvents() {
+  const vp = document.getElementById('viewport');
+
+  vp.addEventListener('mousedown', e => {
+    // 1) Output port → start connection drag
+    const portEl = e.target.closest('[data-out-node]');
+    if (portEl) {
+      drag = {
+        kind: 'connection',
+        from: {
+          nodeId: parseInt(portEl.dataset.outNode),
+          kind:   portEl.dataset.outKind,
+          key:    portEl.dataset.outKey,
+          idx:    portEl.dataset.outIdx !== undefined ? parseInt(portEl.dataset.outIdx) : undefined,
+        },
+        toX: 0, toY: 0,
+      };
+      updateDragMouse(e);
+      renderConnections();
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    // 2) Node header → start node drag (and select)
+    const nodeEl = e.target.closest('.node');
+    if (nodeEl) {
+      const id = parseInt(nodeEl.dataset.nodeId);
+      state.selectedNodeId = id;
+      if (e.target.closest('[data-drag-handle]')) {
+        const n = getNode(id);
+        drag = {
+          kind: 'node',
+          id,
+          startX: e.clientX,
+          startY: e.clientY,
+          origX: n.x,
+          origY: n.y,
+        };
+        e.preventDefault();
+      }
+      render();
+      return;
+    }
+
+    // 3) Empty space → pan
+    state.selectedNodeId = null;
+    drag = {
+      kind: 'pan',
+      startX: e.clientX,
+      startY: e.clientY,
+      origPanX: state.view.panX,
+      origPanY: state.view.panY,
+    };
+    vp.classList.add('panning');
+    render();
+    e.preventDefault();
+  });
+
+  // Double-click on empty space → create node here
+  vp.addEventListener('dblclick', e => {
+    if (e.target.closest('.node') || e.target.closest('[data-out-node]')) return;
+    const r = vp.getBoundingClientRect();
+    const wx = (e.clientX - r.left - state.view.panX) / state.view.zoom;
+    const wy = (e.clientY - r.top  - state.view.panY) / state.view.zoom;
+    addNode(wx - 140, wy - 20);
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!drag) return;
+    if (drag.kind === 'pan') {
+      state.view.panX = drag.origPanX + (e.clientX - drag.startX);
+      state.view.panY = drag.origPanY + (e.clientY - drag.startY);
+      document.getElementById('world').style.transform =
+        `translate(${state.view.panX}px, ${state.view.panY}px) scale(${state.view.zoom})`;
+      renderConnections();
+      return;
+    }
+    if (drag.kind === 'node') {
+      const dx = (e.clientX - drag.startX) / state.view.zoom;
+      const dy = (e.clientY - drag.startY) / state.view.zoom;
+      const n = getNode(drag.id);
+      n.x = drag.origX + dx;
+      n.y = drag.origY + dy;
+      // Fast path: only re-position, don't rebuild DOM
+      const el = document.querySelector(`.node[data-node-id="${drag.id}"]`);
+      if (el) {
+        el.style.left = n.x + 'px';
+        el.style.top  = n.y + 'px';
+      }
+      renderConnections();
+      return;
+    }
+    if (drag.kind === 'connection') {
+      updateDragMouse(e);
+      renderConnections();
+      return;
+    }
+  });
+
+  window.addEventListener('mouseup', e => {
+    const vp = document.getElementById('viewport');
+    vp.classList.remove('panning');
+    if (!drag) return;
+
+    if (drag.kind === 'connection') {
+      const t = document.elementFromPoint(e.clientX, e.clientY);
+      let targetId = null;
+      if (t) {
+        const ip = t.closest('[data-input]');
+        if (ip) {
+          targetId = parseInt(ip.dataset.input);
+        } else {
+          const ne = t.closest('.node');
+          if (ne) targetId = parseInt(ne.dataset.nodeId);
+        }
+      }
+      if (targetId !== null && targetId !== drag.from.nodeId) {
+        const n = getNode(drag.from.nodeId);
+        if (drag.from.kind === 'choice') {
+          n.choices[drag.from.key] = targetId;
+        } else if (drag.from.kind === 'pin') {
+          n.pinSuccess = targetId;
+        } else if (drag.from.kind === 'next') {
+          n.next = targetId;
+        } else if (drag.from.kind === 'map') {
+          if (n.mapTargets[drag.from.idx]) {
+            n.mapTargets[drag.from.idx].target = targetId;
+          }
+        }
+        persist();
+      }
+      drag = null;
+      render();
+      return;
+    }
+
+    if (drag.kind === 'node') {
+      persist();
+      render();
+    }
+    drag = null;
+  });
+
+  vp.addEventListener('wheel', e => {
+    e.preventDefault();
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    const newZ = Math.max(0.15, Math.min(3, state.view.zoom * factor));
+    const r = vp.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
+    state.view.panX = mx - (mx - state.view.panX) * (newZ / state.view.zoom);
+    state.view.panY = my - (my - state.view.panY) * (newZ / state.view.zoom);
+    state.view.zoom = newZ;
+    document.getElementById('world').style.transform =
+      `translate(${state.view.panX}px, ${state.view.panY}px) scale(${state.view.zoom})`;
+    renderConnections();
+    persist();
+  }, { passive: false });
+
+  window.addEventListener('keydown', e => {
+    if (document.activeElement?.tagName.match(/^(INPUT|TEXTAREA)$/)) return;
+    if (e.key === 'Delete' && state.selectedNodeId !== null) {
+      deleteNode(state.selectedNodeId);
+    } else if (e.key === 'Escape') {
+      state.selectedNodeId = null;
+      drag = null;
+      render();
+    }
+  });
+}
+
+function updateDragMouse(e) {
+  const r = document.getElementById('viewport').getBoundingClientRect();
+  drag.toX = (e.clientX - r.left - state.view.panX) / state.view.zoom;
+  drag.toY = (e.clientY - r.top  - state.view.panY) / state.view.zoom;
+}
+
+function zoomReset() {
+  if (state.nodes.length === 0) {
+    state.view = { panX: 0, panY: 0, zoom: 1 };
+  } else {
+    // Fit to bounds with margin
+    const xs = state.nodes.map(n => n.x);
+    const ys = state.nodes.map(n => n.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs) + 280;
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys) + 300;
+    const r = document.getElementById('viewport').getBoundingClientRect();
+    const margin = 60;
+    const zoom = Math.min(
+      (r.width  - margin * 2) / Math.max(1, maxX - minX),
+      (r.height - margin * 2) / Math.max(1, maxY - minY),
+      1
+    );
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    state.view.zoom = Math.max(0.2, zoom);
+    state.view.panX = r.width  / 2 - cx * state.view.zoom;
+    state.view.panY = r.height / 2 - cy * state.view.zoom;
+  }
+  render();
+  persist();
+}
+
+// ============================================================
+// Tidy — layered DAG auto-layout
+// ============================================================
+// Columns = BFS depth from the start node (following choice / pin / map edges).
+// Within a column, nodes are stacked top-down without overlap. Unreachable
+// nodes get parked in a trailing column.
+function tidy() {
+  if (state.nodes.length === 0) return;
+
+  const GAP_X = 120, GAP_Y = 36, COL_W = 280;
+
+  // Outgoing edges per node id.
+  const edgesOf = n => {
+    const outs = [];
+    if (n.nextEnabled && n.next !== null) outs.push(n.next);
+    for (const k of ['A','B','C','D']) {
+      if (n.choicesEnabled?.[k] && n.choices[k] !== null) outs.push(n.choices[k]);
+    }
+    if (n.expectedPin && n.pinSuccess !== null) outs.push(n.pinSuccess);
+    for (const t of n.mapTargets) if (t.target !== null) outs.push(t.target);
+    return outs;
+  };
+
+  // BFS levels from start.
+  const level = new Map();
+  const startId = state.startNodeId ?? state.nodes[0].id;
+  const queue = [startId];
+  level.set(startId, 0);
+  while (queue.length) {
+    const cur = getNode(queue.shift());
+    if (!cur) continue;
+    for (const nx of edgesOf(cur)) {
+      if (!level.has(nx) && getNode(nx)) {
+        level.set(nx, level.get(cur.id) + 1);
+        queue.push(nx);
+      }
+    }
+  }
+
+  // Park unreachable nodes in one extra trailing column.
+  let maxLvl = 0;
+  for (const v of level.values()) maxLvl = Math.max(maxLvl, v);
+  for (const n of state.nodes) {
+    if (!level.has(n.id)) level.set(n.id, maxLvl + 1);
+  }
+
+  // Group by level, stable order by id.
+  const cols = new Map();
+  for (const n of state.nodes) {
+    const l = level.get(n.id);
+    if (!cols.has(l)) cols.set(l, []);
+    cols.get(l).push(n);
+  }
+
+  let x = 80;
+  for (const l of [...cols.keys()].sort((a, b) => a - b)) {
+    const group = cols.get(l).sort((a, b) => a.id - b.id);
+    let y = 80;
+    for (const n of group) {
+      n.x = x;
+      n.y = y;
+      y += estimateNodeHeight(n) + GAP_Y;
+    }
+    x += COL_W + GAP_X;
+  }
+
+  render();
+  zoomReset();   // also persists
+}
+
+// Rough on-screen height of a node card, for non-overlapping stacking.
+function estimateNodeHeight(n) {
+  const ROW = 26;
+  let h = 34 + 44;  // header + display preview
+  if (n.nextEnabled) h += ROW;
+  for (const k of ['A','B','C','D']) if (n.choicesEnabled?.[k]) h += ROW;
+  if (n.expectedPin) h += ROW;
+  if (n.activateMap || n.mapTargets.length > 0) h += 24 + n.mapTargets.length * ROW;
+  if (n.onEnter && n.onEnter.trim()) h += 24;
+  return h + 10;
+}
+
+// ============================================================
+// Dark mode
+// ============================================================
+function toggleDark() {
+  state.darkMode = !state.darkMode;
+  applyDark();
+  persist();
+}
+function applyDark() {
+  document.documentElement.classList.toggle('dark', state.darkMode);
+  const light = document.getElementById('hljs-light');
+  const dark  = document.getElementById('hljs-dark');
+  if (light) light.disabled = state.darkMode;
+  if (dark)  dark.disabled  = !state.darkMode;
+}
+
+// ============================================================
+// Import / Export
+// ============================================================
+function exportJson() {
+  const data = {
+    nodes: state.nodes,
+    startNodeId: state.startNodeId,
+    view: state.view,
+  };
+  showModal('JSON Export — save as story.json (use Import to restore later)',
+    JSON.stringify(data, null, 2), 'story.json');
+}
+
+function handleImport(e) {
+  const f = e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const d = JSON.parse(r.result);
+      if (!Array.isArray(d.nodes)) throw new Error('Missing nodes array');
+      state.nodes = d.nodes.map(n => {
+        const choices = Object.assign({ A: null, B: null, C: null, D: null }, n.choices || {});
+        return {
+          id:           n.id,
+          name:         n.name      || `node${n.id}`,
+          x:            n.x         ?? 0,
+          y:            n.y         ?? 0,
+          display:      n.display   || '',
+          choices,
+          choicesEnabled: n.choicesEnabled
+            ? Object.assign({ A: false, B: false, C: false, D: false }, n.choicesEnabled)
+            : { A: choices.A != null, B: choices.B != null, C: choices.C != null, D: choices.D != null },
+          next:         n.next ?? null,
+          nextEnabled:  n.nextEnabled ?? (n.next != null),
+          activateMap:  !!n.activateMap,
+          mapTargets:   (n.mapTargets || []).map(t => ({
+                          x: t.x ?? 0, y: t.y ?? 0, target: t.target ?? null
+                        })),
+          expectedPin:  n.expectedPin || '',
+          pinSuccess:   n.pinSuccess ?? null,
+          onEnter:      n.onEnter    || '',
+        };
+      });
+      state.startNodeId    = d.startNodeId ?? state.nodes[0]?.id ?? null;
+      if (d.view) state.view = d.view;
+      state.selectedNodeId = null;
+      refreshIdCounter();
+      render();
+      persist();
+      updateStatus('Imported');
+    } catch (err) {
+      alert('Import failed: ' + err.message);
+    }
+  };
+  r.readAsText(f);
+  e.target.value = ''; // allow re-import of same file
+}
+
+function exportCpp() {
+  const code = generateCpp();
+  showModal('C++ Export — paste into story.cpp', code, 'story.cpp.snippet.txt');
+}
+
+function generateCpp() {
+  if (state.nodes.length === 0) return '// No nodes yet — create some first.';
+
+  const out = [];
+  out.push('// =============================================================');
+  out.push('// Generated by MagicBox Story Editor — three drop-in sections.');
+  out.push('// =============================================================');
+  out.push('');
+
+  // --- (1) story.h forward declarations ---
+  out.push('// (1) story.h — replace the `extern StoryNode ...;` line with:');
+  out.push('//');
+  out.push('// extern StoryNode ' + state.nodes.map(n => n.name).join(', ') + ';');
+  out.push('');
+
+  // --- (2) story.cpp Content section ---
+  out.push('// (2) story.cpp — replace the entire "Content" section with the');
+  out.push('//     block below (onEnter callbacks + node literals).');
+  out.push('');
+
+  // onEnter callbacks — defined before the literals that reference them.
+  const withBody = state.nodes.filter(hasOnEnterBody);
+  for (const n of withBody) {
+    out.push(`static void ${onEnterName(n)}() {`);
+    for (const line of n.onEnter.replace(/\r/g, '').replace(/\s+$/, '').split('\n')) {
+      out.push(line.trim() === '' ? '' : '  ' + line);
+    }
+    out.push('}');
+    out.push('');
+  }
+
+  for (const n of state.nodes) {
+    out.push(...cppForNode(n));
+    out.push('');
+  }
+
+  // --- (3) storyBegin() ---
+  out.push('// (3) story.cpp — replace the body of storyBegin() with:');
+  out.push('');
+  out.push('void storyBegin() {');
+  for (const n of state.nodes) {
+    out.push(`  storyGraph.addNode(&${n.name});`);
+  }
+  out.push('');
+  const start = state.startNodeId !== null ? getNode(state.startNodeId) : null;
+  out.push(`  storyGraph.jumpToNode(${start ? start.id : 0});`);
+  out.push('}');
+
+  return out.join('\n');
+}
+
+function cppForNode(n) {
+  const lines = [];
+  lines.push(`StoryNode ${n.name} = {`);
+  lines.push(`    .id = ${n.id},`);
+  lines.push(`    .display = ${cppString(n.display)},`);
+
+  const ref = id => id !== null && id !== undefined
+    ? '&' + (getNode(id)?.name ?? `/* missing #${id} */ nullptr`)
+    : 'nullptr';
+
+  const validTargets = n.mapTargets.filter(t => t.target !== null);
+  const hasNext    = !!(n.nextEnabled && n.next !== null && n.next !== undefined);
+  const hasMap     = n.activateMap || validTargets.length > 0;
+  const hasPin     = !!(n.expectedPin && n.pinSuccess !== null);
+  const hasOnEnter = hasOnEnterBody(n);
+
+  // --- next / choices prefix ---
+  if (hasNext) {
+    // Direct-transition node. GOTO sets .next; choices are ignored at runtime.
+    lines.push(`    GOTO(${ref(n.next)}),`);
+    if (hasMap || hasPin || hasOnEnter) {
+      // Bridge past the choice fields explicitly — can't use CHOICES here since
+      // that macro also sets .next (= would clobber GOTO).
+      lines.push(`    .choiceA = nullptr, .choiceB = nullptr, .choiceC = nullptr, .choiceD = nullptr,`);
+    }
+  } else {
+    // Disabled choices export as nullptr regardless of any stale target.
+    const choiceRef = k => n.choicesEnabled?.[k] ? ref(n.choices[k]) : 'nullptr';
+    lines.push(`    CHOICES(${choiceRef('A')}, ${choiceRef('B')}, ${choiceRef('C')}, ${choiceRef('D')}),`);
+  }
+
+  // MAP section
+  if (hasMap) {
+    if (validTargets.length > 0) {
+      const tStr = validTargets
+        .map(t => `{${t.x}, ${t.y}, ${getNode(t.target).id}}`)
+        .join(', ');
+      if (n.activateMap) {
+        lines.push(`    MAP_TARGETS(${tStr}),`);
+      } else {
+        // targets set but map not activated — emit explicit fields
+        lines.push(`    .activateMap = false,`);
+        lines.push(`    .mapTargetCount = ${validTargets.length},`);
+        lines.push(`    .mapTargets = (const MapTarget[]){${tStr}},`);
+      }
+    } else {
+      // activateMap=true but no targets
+      lines.push(`    .activateMap = true,`);
+      lines.push(`    .mapTargetCount = 0,`);
+      lines.push(`    .mapTargets = nullptr,`);
+    }
+  } else if (hasPin || hasOnEnter) {
+    // Need gap-filler so we can reach later fields
+    lines.push(`    MAP_OFF,`);
+  }
+
+  // PIN section
+  if (hasPin) {
+    lines.push(`    PIN(${cppString(n.expectedPin)}, &${getNode(n.pinSuccess).name}),`);
+  } else if (hasOnEnter) {
+    // Gap-fill PIN fields so we can reach .onEnter
+    lines.push(`    .expectedPin = nullptr,`);
+    lines.push(`    .pinSuccess = nullptr,`);
+  }
+
+  // onEnter
+  if (hasOnEnter) {
+    lines.push(`    .onEnter = ${onEnterName(n)},`);
+  }
+
+  lines.push(`};`);
+  return lines;
+}
+
+function hasOnEnterBody(n) {
+  return !!(n.onEnter && n.onEnter.trim());
+}
+
+function onEnterName(n) {
+  return 'onEnter_' + cppIdent(n.name);
+}
+
+function cppString(s) {
+  return '"' + String(s)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g,  '\\"')
+    .replace(/\r/g, '')
+    .replace(/\n/g, '\\n') + '"';
+}
+
+// ============================================================
+// Modal
+// ============================================================
+let modalContent  = '';
+let modalFilename = '';
+
+function showModal(title, content, filename) {
+  modalContent  = content;
+  modalFilename = filename;
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-content').value = content;
+  document.getElementById('modal').classList.remove('hidden');
+}
+function closeModal() {
+  document.getElementById('modal').classList.add('hidden');
+}
+function copyModal() {
+  navigator.clipboard.writeText(modalContent).then(
+    () => updateStatus('Copied to clipboard'),
+    () => alert('Copy failed — select the text and copy manually.')
+  );
+}
+function downloadModal() {
+  const blob = new Blob([modalContent], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = modalFilename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ============================================================
+// Utils
+// ============================================================
+function esc(s) {
+  return String(s).replace(/[&<>"']/g,
+    c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+// ============================================================
+// Boot
+// ============================================================
+init();
+</script>
+</body>
+</html>
