@@ -25,7 +25,8 @@ private:
     void enterNode(StoryNode* node);
 };
 
-extern StoryNode startNode, forestNode, caveNode, safeNode, treasureNode, leaveNode;
+// Node literals live in src/story_content.cpp and reference each other via
+// their own forward declarations there — no global extern list needed here.
 extern StoryGraph storyGraph;
 
 void printCurrent();

@@ -7,55 +7,10 @@
 // -----------------
 StoryGraph storyGraph;
 // -----------------
-
-
-// -----------------
-// Content — fully declarative. The graph wiring lives in the literals; only
-// fields you set matter, the rest are zero-initialized (= nullptr / false / 0).
-// Use the helper macros from types.h to avoid manually filling gaps.
-// -----------------
-StoryNode startNode = {
-    .id = 0,
-    .display = "You are in a room. A) Door B) Window C) Safe",
-    CHOICES(&forestNode, &caveNode, &safeNode, nullptr),
-};
-
-StoryNode forestNode = {
-    .id = 1,
-    .display = "The forest is dark. Walk to the glowing point on the map, or B) Go back",
-    CHOICES(nullptr, &startNode, nullptr, nullptr),
-    MAP_TARGETS({4, 4, 2}),
-};
-
-StoryNode caveNode = {
-    .id = 2,
-    .display = "It's a smelly cave. Walk to the glowing point to leave, or B) Go back",
-    CHOICES(nullptr, &startNode, nullptr, nullptr),
-    MAP_TARGETS({4, 4, 0}),
-};
-
-StoryNode safeNode = {
-    .id = 3,
-    .display = "A locked safe. Enter PIN as *NNNN# (hint: 1234). B) Back",
-    CHOICES(nullptr, &startNode, nullptr, nullptr),
-    MAP_OFF,
-    PIN("1234", &treasureNode),
-};
-
-StoryNode treasureNode = {
-    .id = 4,
-    .display = "The safe pops open. You found gold! A) Leave",
-    CHOICES(&leaveNode, nullptr, nullptr, nullptr),
-};
-
-// Direct-transition (merge) node: shows its line, then auto-advances to
-// startNode without waiting for input.
-StoryNode leaveNode = {
-    .id = 5,
-    .display = "You pocket the gold and head back...",
-    GOTO(&startNode),
-};
-// -----------------
+//
+// Note: the authored story content (node literals + storyBegin) lives in
+// src/story_content.cpp, which is the file the editor's "Export C++" overwrites.
+// This file holds only the engine.
 
 
 // -----------------
@@ -144,19 +99,7 @@ void printCurrent() {
   if (storyGraph.getCurrentNode()) printSerial(storyGraph.getCurrentNode()->display);
 }
 
-void storyBegin() {
-  // Just register every node — the graph is wired entirely via pointers in
-  // the literals above. addNode() only feeds the ID→node lookup used by
-  // setGameState() (which the map collision path calls).
-  storyGraph.addNode(&startNode);
-  storyGraph.addNode(&forestNode);
-  storyGraph.addNode(&caveNode);
-  storyGraph.addNode(&safeNode);
-  storyGraph.addNode(&treasureNode);
-  storyGraph.addNode(&leaveNode);
-
-  storyGraph.jumpToNode(0);
-}
+// storyBegin() is defined in story_content.cpp (authored content).
 
 void printWrongChoice() {
   printSerial("You can't make this choice\n");

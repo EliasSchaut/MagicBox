@@ -35,7 +35,7 @@ Hardware globals (`customKeypad`, `lc`, joystick pins) live in `src/hardware.cpp
 
 ### Story graph
 
-`StoryGraph` (in `src/story.cpp`) is a fixed-capacity (`nodes[20]`) collection of `StoryNode`s. The graph is **fully declarative**: each `StoryNode` literal wires itself via direct `StoryNode*` pointers (choices, `pinSuccess`, `next`) — there is no `connectNodes`/`connectPin`. `storyBegin()` just `addNode(&n)`s every node (feeding the `id`→node lookup used by `setGameState`/map collisions) and `jumpToNode(startId)`.
+`StoryGraph` is a fixed-capacity (`nodes[20]`) collection of `StoryNode`s. **Engine** (`StoryGraph` + handlers) lives in `src/story.cpp`; the **authored content** (node literals + `storyBegin()`) lives in `src/story_content.cpp` — that file is what the editor's "Export C++" overwrites wholesale, so the engine is never clobbered. The graph is **fully declarative**: each `StoryNode` literal wires itself via direct `StoryNode*` pointers (choices, `pinSuccess`, `next`) — there is no `connectNodes`/`connectPin`. `storyBegin()` just `addNode(&n)`s every node (feeding the `id`→node lookup used by `setGameState`/map collisions) and `jumpToNode(startId)`.
 
 Author nodes with designated initializers + the macros in `types.h`:
 
