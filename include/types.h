@@ -42,6 +42,12 @@ struct StoryNode {
     StoryNode* b;
     StoryNode* c;
     StoryNode* d;
+    void (*onEnter)();
+};
+
+struct MapTarget {
+    Position pos;
+    int storyID{};
 };
 
 #endif //MAGICBOX_TYPES_H

@@ -1,4 +1,5 @@
 #include "story.h"
+#include "map.h"
 
 // -----------------
 // Classes & Globals
@@ -8,21 +9,36 @@ StoryGraph storyGraph;
 
 
 // -----------------
+// onEnter callbacks
+// -----------------
+static void onEnterForest() {
+  mapSetTarget(4, 4, 2);
+  mapEnable();
+}
+
+static void onEnterCave() {
+  mapSetTarget(4, 4, 0);
+  mapEnable();
+}
+// -----------------
+
+
+// -----------------
 // Content
 // -----------------
 StoryNode startNode = {
-  "You are in a room. A) Door B) Window", 
-  0, nullptr, nullptr, nullptr, nullptr 
+  "You are in a room. A) Door B) Window",
+  0, nullptr, nullptr, nullptr, nullptr, nullptr
 };
 
 StoryNode forestNode = {
-  "The forest is dark. A) Walk B) Go back", 
-  1, nullptr, nullptr, nullptr, nullptr 
+  "The forest is dark. Walk to the glowing point on the map, or B) Go back",
+  1, nullptr, nullptr, nullptr, nullptr, onEnterForest
 };
 
 StoryNode caveNode = {
-  "It's a smelly cave. B) Go back", 
-  2, nullptr, nullptr, nullptr, nullptr 
+  "It's a smelly cave. Walk to the glowing point to leave, or B) Go back",
+  2, nullptr, nullptr, nullptr, nullptr, onEnterCave
 };
 // -----------------
 
@@ -62,11 +78,17 @@ void StoryGraph::connectNodes(int fromID, Choice choice, int toID) {
   }
 }
 
+void StoryGraph::enterNode(StoryNode* node) {
+  currentNode = node;
+  mapDisable();
+  printSerial(currentNode->display);
+  if (currentNode->onEnter) currentNode->onEnter();
+}
+
 void StoryGraph::jumpToNode(int stateID) {
   StoryNode* node = findNodeByID(stateID);
   if (node) {
-    currentNode = node;
-    printSerial(currentNode->display);
+    enterNode(node);
   }
 }
 
@@ -82,8 +104,7 @@ void StoryGraph::handleChoice(Choice choice) {
   };
 
   if (nextNode != nullptr) {
-    currentNode = nextNode;
-    printSerial(currentNode->display);
+    enterNode(nextNode);
   } else {
     printWrongChoice();
   }
@@ -107,7 +128,6 @@ void storyBegin() {
 
   storyGraph.connectNodes(0, Choice::A, 1);
   storyGraph.connectNodes(0, Choice::B, 2);
-  storyGraph.connectNodes(1, Choice::A, 1);
   storyGraph.connectNodes(1, Choice::B, 0);
   storyGraph.connectNodes(2, Choice::B, 0);
 

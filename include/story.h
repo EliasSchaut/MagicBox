@@ -22,6 +22,7 @@ private:
     int nodeCount;
     StoryNode* currentNode;
     StoryNode* findNodeByID(int id);
+    void enterNode(StoryNode* node);
 };
 
 extern StoryNode startNode, forestNode, caveNode;

@@ -10,4 +10,14 @@
 
 void mapWalk();
 
+void mapEnable();
+void mapDisable();
+bool mapIsActive();
+
+void mapTeleportPlayer(int x, int y);
+
+void mapSetTarget(int x, int y, int storyID);
+void mapRemoveTarget(int x, int y);
+void mapClearTargets();
+
 #endif //MAGICBOX_MAP_H

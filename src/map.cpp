@@ -1,17 +1,128 @@
 #include "map.h"
+#include "story.h"
 
-bool minigame_not_finished = true;
+namespace {
+    constexpr int MAX_TARGETS = 8;
+    constexpr unsigned long BLINK_INTERVAL_MS = 250;
+    constexpr unsigned long MOVE_DELAY_MS = 300;
 
-Position position = Position(0, 0);
+    Position playerPos{0, 0};
+    bool mapActive = false;
+
+    MapTarget targets[MAX_TARGETS];
+    int targetCount = 0;
+
+    bool blinkOn = true;
+    unsigned long lastBlinkToggle = 0;
+
+    // Cached frame: rows of the 8x8 matrix. Each byte's bits are columns
+    // following LedControl's convention (B10000000 >> column).
+    byte frameBuffer[8] = {0};
+
+    int findTargetIndex(int x, int y) {
+        for (int i = 0; i < targetCount; i++) {
+            if (targets[i].pos.x == x && targets[i].pos.y == y) return i;
+        }
+        return -1;
+    }
+
+    void renderFrame() {
+        byte newFrame[8] = {0};
+        if (mapActive) {
+            if (blinkOn) {
+                for (int i = 0; i < targetCount; i++) {
+                    newFrame[targets[i].pos.x] |= (byte)(B10000000 >> targets[i].pos.y);
+                }
+            }
+            newFrame[playerPos.x] |= (byte)(B10000000 >> playerPos.y);
+        }
+        for (int row = 0; row < 8; row++) {
+            if (newFrame[row] != frameBuffer[row]) {
+                lc.setRow(0, row, newFrame[row]);
+                frameBuffer[row] = newFrame[row];
+            }
+        }
+    }
+
+    bool checkCollision() {
+        int idx = findTargetIndex(playerPos.x, playerPos.y);
+        if (idx < 0) return false;
+        int storyID = targets[idx].storyID;
+        setGameState(storyID);
+        return true;
+    }
+}
+
+void mapEnable() {
+    mapActive = true;
+    blinkOn = true;
+    lastBlinkToggle = millis();
+    renderFrame();
+}
+
+void mapDisable() {
+    if (!mapActive) return;
+    mapActive = false;
+    renderFrame();
+}
+
+bool mapIsActive() {
+    return mapActive;
+}
+
+void mapTeleportPlayer(int x, int y) {
+    playerPos.x = constrain(x, 0, 7);
+    playerPos.y = constrain(y, 0, 7);
+    if (mapActive) renderFrame();
+}
+
+void mapSetTarget(int x, int y, int storyID) {
+    int idx = findTargetIndex(x, y);
+    if (idx >= 0) {
+        targets[idx].storyID = storyID;
+    } else if (targetCount < MAX_TARGETS) {
+        targets[targetCount].pos = Position(x, y);
+        targets[targetCount].storyID = storyID;
+        targetCount++;
+    }
+    if (mapActive) renderFrame();
+}
+
+void mapRemoveTarget(int x, int y) {
+    int idx = findTargetIndex(x, y);
+    if (idx < 0) return;
+    for (int i = idx; i < targetCount - 1; i++) {
+        targets[i] = targets[i + 1];
+    }
+    targetCount--;
+    if (mapActive) renderFrame();
+}
+
+void mapClearTargets() {
+    targetCount = 0;
+    if (mapActive) renderFrame();
+}
 
 void mapWalk() {
-  Direction moveDir = readJoystrickDirection();
-  if (moveDir == Direction::NONE) return;
-  Position next = position;
-  next.move(moveDir);
-  if (next.x == position.x && next.y == position.y) return;
-  lc.setLed(0, position.x, position.y, false);
-  position = next;
-  lc.setLed(0, position.x, position.y, true);
-  delay(300);
-};
+    if (!mapActive) return;
+
+    Direction moveDir = readJoystrickDirection();
+    if (moveDir != Direction::NONE) {
+        Position next = playerPos;
+        next.move(moveDir);
+        if (next.x != playerPos.x || next.y != playerPos.y) {
+            playerPos = next;
+            renderFrame();
+            if (checkCollision()) return;
+            delay(MOVE_DELAY_MS);
+            return;
+        }
+    }
+
+    unsigned long now = millis();
+    if (now - lastBlinkToggle >= BLINK_INTERVAL_MS) {
+        lastBlinkToggle = now;
+        blinkOn = !blinkOn;
+        renderFrame();
+    }
+}
