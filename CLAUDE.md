@@ -18,31 +18,44 @@ pio device monitor -b 9600       # open serial monitor (game I/O)
 pio device monitor -b 9600 -e megaatmega2560
 ```
 
-The single configured environment is `[env:megaatmega2560]` in `platformio.ini` (platform `atmelavr`, framework `arduino`). `.pio/` is the build cache (gitignored).
+The single configured environment is `[env:megaatmega2560]` in `platformio.ini` (platform `atmelavr`, framework `arduino`). `.pio/` is the build cache (gitignored). `build_flags = -std=gnu++17` (unflagging `gnu++11`) is **required** — `StoryNode` literals use designated initializers.
+
+> avr-gcc 7 caveat: designated initializers must set a **contiguous prefix** of struct fields (in order, no gaps); trailing fields may be omitted (zero-initialized). Hence the authoring macros below.
 
 ## Architecture
 
 The runtime has two concurrent surfaces driven from `loop()` in `src/main.cpp`:
 
-1. **Story engine** — keypad input (A/B/C/D) is mapped to a `Choice` and dispatched to a `StoryGraph`. Story text is rendered over `Serial`.
-2. **Map minigame** — joystick input moves a single lit pixel on the 8×8 LED matrix. Polled every loop iteration with a 300 ms debounce delay inside `mapWalk()`.
+1. **Story engine** — keypad input is mapped to a `Choice` (A/B/C/D) or a PIN and dispatched to a `StoryGraph`. Story text is rendered over `Serial`.
+2. **Map minigame** — joystick moves a lit pixel on the 8×8 LED matrix; target pixels blink. Polled every loop iteration. Only active while a story node enabled it.
 
-Hardware globals (`customKeypad`, `lc`, joystick pins) live in `src/hardware.cpp` / `include/hardware.h` and are wired up by `setupHardware()`. Pin assignments are hard-coded there — change them in one place.
+`handleInput()` in `main.cpp` also runs the **PIN buffer**: `*` starts/resets capture, digits accumulate, `#` submits the digits since the last `*` to `handlePin()` (so `*234*4652#` → `4652`, `2345#` → ignored).
+
+Hardware globals (`customKeypad`, `lc`, joystick pins) live in `src/hardware.cpp` / `include/hardware.h`, wired up by `setupHardware()`. Pin assignments are hard-coded there — change them in one place.
 
 ### Story graph
 
-`StoryGraph` (in `src/story.cpp`) is a fixed-capacity (`nodes[20]`) collection of `StoryNode`s. Each node has a `gameStateID`, a display string, and four child pointers (`a`/`b`/`c`/`d`) — one per `Choice`. Story content is authored as:
+`StoryGraph` (in `src/story.cpp`) is a fixed-capacity (`nodes[20]`) collection of `StoryNode`s. The graph is **fully declarative**: each `StoryNode` literal wires itself via direct `StoryNode*` pointers (choices, `pinSuccess`, `next`) — there is no `connectNodes`/`connectPin`. `storyBegin()` just `addNode(&n)`s every node (feeding the `id`→node lookup used by `setGameState`/map collisions) and `jumpToNode(startId)`.
 
-1. `StoryNode` literal definitions at file scope (e.g. `startNode`, `forestNode`, `caveNode`).
-2. `storyGraph.addNode(&node)` to register each node.
-3. `storyGraph.connectNodes(fromID, Choice::X, toID)` to wire transitions.
-4. `storyGraph.jumpToNode(id)` to set the starting state.
+Author nodes with designated initializers + the macros in `types.h`:
 
-Both registration and wiring happen in `storyBegin()`, which is called once from `setup()`. A `nullptr` child means that choice is invalid — `handleChoice` falls through to `printWrongChoice()`. Adding a new scene means defining the `StoryNode`, calling `addNode`, and adding the relevant `connectNodes` calls; the `gameStateID` is the addressing scheme.
+- `CHOICES(a,b,c,d)` — the four choice targets (`nullptr` = invalid → `printWrongChoice()`). Implicitly sets `.next = nullptr`. `NO_CHOICES` = all `nullptr`.
+- `GOTO(&node)` — **direct transition**: after the display text, auto-advance to `node` without input (used to merge branches). `enterNode` follows the `next` chain in a loop (guarded to 64 hops).
+- `MAP_TARGETS({x,y,storyID}, …)` — activate the map + register blinking targets; `MAP_OFF` is the explicit gap-filler. `PIN("1234", &successNode)` — PIN entry.
+
+`enterNode()` on each transition: `mapDisable()` → print display → apply map config → run optional `onEnter` (escape-hatch callback, e.g. `mapTeleportPlayer(x,y)`) → follow `next`.
+
+### Map ↔ Story integration
+
+`map.cpp` exposes `mapEnable/mapDisable/mapIsActive`, `mapSetTarget(x,y,storyID)` (add or overwrite — targets persist across disables for progress), `mapRemoveTarget`, `mapClearTargets`, `mapTeleportPlayer`. Walking onto a target calls `setGameState(storyID)` → jumps to that node and disables the map. Rendering uses a cached `frameBuffer[8]` + `lc.setRow` (atomic, flicker-free); targets blink via `millis()`.
 
 ### Types
 
-`include/types.h` is the shared vocabulary: `Direction`, `Position` (with bounds-checked `move()` clamped to 0–7 for the LED matrix), `Choice` (A/B/C/D backed by their ASCII chars), and `StoryNode`. Inline helpers (`charToChoice`, `printSerial`, `printDirection`) live in `include/utils.h` and are header-only.
+`include/types.h` is the shared vocabulary: `Direction`, `Position` (bounds-checked `move()` clamped 0–7), `Choice`, `MapTarget`, and `StoryNode` (a plain aggregate — see macros above). Inline helpers (`charToChoice`, `printSerial`, `printDirection`) are header-only in `include/utils.h`.
+
+### Visual editor
+
+`editor.html` (project root, standalone — Tailwind + highlight.js CDNs, no build) is a node-graph editor for authoring stories: pan/zoom canvas, drag-to-connect ports, per-field props panel, an `onEnter` C++ code editor, Tidy auto-layout. **Export C++** emits the node literals + `storyBegin()` ready to paste into `story.cpp`; JSON import/export round-trips the editor state (incl. positions).
 
 ### Libraries
 
