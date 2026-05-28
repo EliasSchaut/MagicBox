@@ -43,6 +43,8 @@ struct StoryNode {
     StoryNode* c;
     StoryNode* d;
     void (*onEnter)();
+    const char* expectedPin;
+    StoryNode* pinSuccess;
 };
 
 struct MapTarget {

@@ -1,5 +1,6 @@
 #include "story.h"
 #include "map.h"
+#include <string.h>
 
 // -----------------
 // Classes & Globals
@@ -27,18 +28,28 @@ static void onEnterCave() {
 // Content
 // -----------------
 StoryNode startNode = {
-  "You are in a room. A) Door B) Window",
-  0, nullptr, nullptr, nullptr, nullptr, nullptr
+  "You are in a room. A) Door B) Window C) Safe",
+  0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
 };
 
 StoryNode forestNode = {
   "The forest is dark. Walk to the glowing point on the map, or B) Go back",
-  1, nullptr, nullptr, nullptr, nullptr, onEnterForest
+  1, nullptr, nullptr, nullptr, nullptr, onEnterForest, nullptr, nullptr
 };
 
 StoryNode caveNode = {
   "It's a smelly cave. Walk to the glowing point to leave, or B) Go back",
-  2, nullptr, nullptr, nullptr, nullptr, onEnterCave
+  2, nullptr, nullptr, nullptr, nullptr, onEnterCave, nullptr, nullptr
+};
+
+StoryNode safeNode = {
+  "A locked safe. Enter PIN as *NNNN# (hint: 1234). B) Back",
+  3, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
+};
+
+StoryNode treasureNode = {
+  "The safe pops open. You found gold! A) Back to room",
+  4, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
 };
 // -----------------
 
@@ -78,6 +89,15 @@ void StoryGraph::connectNodes(int fromID, Choice choice, int toID) {
   }
 }
 
+void StoryGraph::connectPin(int fromID, const char* pin, int toID) {
+  StoryNode* fromNode = findNodeByID(fromID);
+  StoryNode* toNode = findNodeByID(toID);
+  if (fromNode && toNode) {
+    fromNode->expectedPin = pin;
+    fromNode->pinSuccess = toNode;
+  }
+}
+
 void StoryGraph::enterNode(StoryNode* node) {
   currentNode = node;
   mapDisable();
@@ -109,6 +129,18 @@ void StoryGraph::handleChoice(Choice choice) {
     printWrongChoice();
   }
 }
+
+void StoryGraph::handlePin(const char* pin) {
+  if (!currentNode || !currentNode->expectedPin || !currentNode->pinSuccess) {
+    printSerial("No PIN expected here");
+    return;
+  }
+  if (strcmp(pin, currentNode->expectedPin) == 0) {
+    enterNode(currentNode->pinSuccess);
+  } else {
+    printSerial("Wrong PIN");
+  }
+}
 // -----------------
 
 
@@ -125,22 +157,33 @@ void storyBegin() {
   storyGraph.addNode(&startNode);
   storyGraph.addNode(&forestNode);
   storyGraph.addNode(&caveNode);
+  storyGraph.addNode(&safeNode);
+  storyGraph.addNode(&treasureNode);
 
   storyGraph.connectNodes(0, Choice::A, 1);
   storyGraph.connectNodes(0, Choice::B, 2);
+  storyGraph.connectNodes(0, Choice::C, 3);
   storyGraph.connectNodes(1, Choice::B, 0);
   storyGraph.connectNodes(2, Choice::B, 0);
+  storyGraph.connectNodes(3, Choice::B, 0);
+  storyGraph.connectNodes(4, Choice::A, 0);
+
+  storyGraph.connectPin(3, "1234", 4);
 
   storyGraph.jumpToNode(0);
 };
 
 void printWrongChoice() {
-  printSerial("You can't make this choice");
+  printSerial("You can't make this choice\n");
 };
 
 void handleChoice(Choice choice) {
   storyGraph.handleChoice(choice);
 };
+
+void handlePin(const char* pin) {
+  storyGraph.handlePin(pin);
+}
 
 void setGameState(int state) {
   storyGraph.jumpToNode(state);

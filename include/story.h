@@ -13,9 +13,11 @@ public:
     StoryGraph();
     void addNode(StoryNode* node);
     void connectNodes(int fromID, Choice choice, int toID);
+    void connectPin(int fromID, const char* pin, int toID);
     void jumpToNode(int stateID);
     StoryNode* getCurrentNode() const { return currentNode; }
     void handleChoice(Choice choice);
+    void handlePin(const char* pin);
 
 private:
     StoryNode* nodes[20]{}; // Assuming a maximum of 20 nodes for this simple implementation
@@ -25,13 +27,14 @@ private:
     void enterNode(StoryNode* node);
 };
 
-extern StoryNode startNode, forestNode, caveNode;
+extern StoryNode startNode, forestNode, caveNode, safeNode, treasureNode;
 extern StoryGraph storyGraph;
 
 void printCurrent();
 void storyBegin();
 void printWrongChoice();
 void handleChoice(Choice choice);
+void handlePin(const char* pin);
 void setGameState(int state);
 
 #endif //MAGICBOX_STORY_H
