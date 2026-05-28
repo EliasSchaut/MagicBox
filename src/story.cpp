@@ -10,46 +10,42 @@ StoryGraph storyGraph;
 
 
 // -----------------
-// onEnter callbacks
-// -----------------
-static void onEnterForest() {
-  mapSetTarget(4, 4, 2);
-  mapEnable();
-}
-
-static void onEnterCave() {
-  mapSetTarget(4, 4, 0);
-  mapEnable();
-}
-// -----------------
-
-
-// -----------------
-// Content
+// Content — fully declarative. The graph wiring lives in the literals; only
+// fields you set matter, the rest are zero-initialized (= nullptr / false / 0).
+// Use the helper macros from types.h to avoid manually filling gaps.
 // -----------------
 StoryNode startNode = {
-  "You are in a room. A) Door B) Window C) Safe",
-  0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
+    .id = 0,
+    .display = "You are in a room. A) Door B) Window C) Safe",
+    CHOICES(&forestNode, &caveNode, &safeNode, nullptr),
 };
 
 StoryNode forestNode = {
-  "The forest is dark. Walk to the glowing point on the map, or B) Go back",
-  1, nullptr, nullptr, nullptr, nullptr, onEnterForest, nullptr, nullptr
+    .id = 1,
+    .display = "The forest is dark. Walk to the glowing point on the map, or B) Go back",
+    CHOICES(nullptr, &startNode, nullptr, nullptr),
+    MAP_TARGETS({4, 4, 2}),
 };
 
 StoryNode caveNode = {
-  "It's a smelly cave. Walk to the glowing point to leave, or B) Go back",
-  2, nullptr, nullptr, nullptr, nullptr, onEnterCave, nullptr, nullptr
+    .id = 2,
+    .display = "It's a smelly cave. Walk to the glowing point to leave, or B) Go back",
+    CHOICES(nullptr, &startNode, nullptr, nullptr),
+    MAP_TARGETS({4, 4, 0}),
 };
 
 StoryNode safeNode = {
-  "A locked safe. Enter PIN as *NNNN# (hint: 1234). B) Back",
-  3, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
+    .id = 3,
+    .display = "A locked safe. Enter PIN as *NNNN# (hint: 1234). B) Back",
+    CHOICES(nullptr, &startNode, nullptr, nullptr),
+    MAP_OFF,
+    PIN("1234", &treasureNode),
 };
 
 StoryNode treasureNode = {
-  "The safe pops open. You found gold! A) Back to room",
-  4, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
+    .id = 4,
+    .display = "The safe pops open. You found gold! A) Back to room",
+    CHOICES(&startNode, nullptr, nullptr, nullptr),
 };
 // -----------------
 
@@ -60,74 +56,55 @@ StoryNode treasureNode = {
 StoryGraph::StoryGraph() : nodes{}, nodeCount(0), currentNode(nullptr) {}
 
 void StoryGraph::addNode(StoryNode* node) {
-  if (nodeCount < 20) {
-    nodes[nodeCount++] = node;
-  }
+  if (nodeCount < 20) nodes[nodeCount++] = node;
 }
 
 StoryNode* StoryGraph::findNodeByID(int id) {
   for (int i = 0; i < nodeCount; i++) {
-    if (nodes[i]->gameStateID == id) {
-      return nodes[i];
-    }
+    if (nodes[i]->id == id) return nodes[i];
   }
   return nullptr;
 }
 
-void StoryGraph::connectNodes(int fromID, Choice choice, int toID) {
-  StoryNode* fromNode = findNodeByID(fromID);
-  StoryNode* toNode = findNodeByID(toID);
-
-  if (fromNode && toNode) {
-    switch (choice) {
-      case Choice::A: fromNode->a = toNode; break;
-      case Choice::B: fromNode->b = toNode; break;
-      case Choice::C: fromNode->c = toNode; break;
-      case Choice::D: fromNode->d = toNode; break;
-      default: break;
-    }
-  }
-}
-
-void StoryGraph::connectPin(int fromID, const char* pin, int toID) {
-  StoryNode* fromNode = findNodeByID(fromID);
-  StoryNode* toNode = findNodeByID(toID);
-  if (fromNode && toNode) {
-    fromNode->expectedPin = pin;
-    fromNode->pinSuccess = toNode;
-  }
-}
-
 void StoryGraph::enterNode(StoryNode* node) {
   currentNode = node;
+
+  // Default after every transition: map off. The declarative config below
+  // (and/or onEnter) may turn it back on.
   mapDisable();
-  printSerial(currentNode->display);
-  if (currentNode->onEnter) currentNode->onEnter();
+
+  printSerial(node->display);
+
+  // Apply declarative map config.
+  if (node->mapTargets) {
+    for (int i = 0; i < node->mapTargetCount; i++) {
+      const MapTarget& t = node->mapTargets[i];
+      mapSetTarget(t.x, t.y, t.storyID);
+    }
+  }
+  if (node->activateMap) mapEnable();
+
+  // Escape hatch (e.g. mapTeleportPlayer(...)).
+  if (node->onEnter) node->onEnter();
 }
 
-void StoryGraph::jumpToNode(int stateID) {
-  StoryNode* node = findNodeByID(stateID);
-  if (node) {
-    enterNode(node);
-  }
+void StoryGraph::jumpToNode(int id) {
+  StoryNode* node = findNodeByID(id);
+  if (node) enterNode(node);
 }
 
 void StoryGraph::handleChoice(Choice choice) {
-  StoryNode* nextNode = nullptr;
-
-  switch(choice) {
-    case Choice::A: nextNode = currentNode->a; break;
-    case Choice::B: nextNode = currentNode->b; break;
-    case Choice::C: nextNode = currentNode->c; break;
-    case Choice::D: nextNode = currentNode->d; break;
+  if (!currentNode) return;
+  StoryNode* next = nullptr;
+  switch (choice) {
+    case Choice::A: next = currentNode->choiceA; break;
+    case Choice::B: next = currentNode->choiceB; break;
+    case Choice::C: next = currentNode->choiceC; break;
+    case Choice::D: next = currentNode->choiceD; break;
     default: break;
-  };
-
-  if (nextNode != nullptr) {
-    enterNode(nextNode);
-  } else {
-    printWrongChoice();
   }
+  if (next) enterNode(next);
+  else printWrongChoice();
 }
 
 void StoryGraph::handlePin(const char* pin) {
@@ -148,38 +125,29 @@ void StoryGraph::handlePin(const char* pin) {
 // Handler
 // -----------------
 void printCurrent() {
-  if (storyGraph.getCurrentNode()) {
-    printSerial(storyGraph.getCurrentNode()->display);
-  }
-};
+  if (storyGraph.getCurrentNode()) printSerial(storyGraph.getCurrentNode()->display);
+}
 
 void storyBegin() {
+  // Just register every node — the graph is wired entirely via pointers in
+  // the literals above. addNode() only feeds the ID→node lookup used by
+  // setGameState() (which the map collision path calls).
   storyGraph.addNode(&startNode);
   storyGraph.addNode(&forestNode);
   storyGraph.addNode(&caveNode);
   storyGraph.addNode(&safeNode);
   storyGraph.addNode(&treasureNode);
 
-  storyGraph.connectNodes(0, Choice::A, 1);
-  storyGraph.connectNodes(0, Choice::B, 2);
-  storyGraph.connectNodes(0, Choice::C, 3);
-  storyGraph.connectNodes(1, Choice::B, 0);
-  storyGraph.connectNodes(2, Choice::B, 0);
-  storyGraph.connectNodes(3, Choice::B, 0);
-  storyGraph.connectNodes(4, Choice::A, 0);
-
-  storyGraph.connectPin(3, "1234", 4);
-
   storyGraph.jumpToNode(0);
-};
+}
 
 void printWrongChoice() {
   printSerial("You can't make this choice\n");
-};
+}
 
 void handleChoice(Choice choice) {
   storyGraph.handleChoice(choice);
-};
+}
 
 void handlePin(const char* pin) {
   storyGraph.handlePin(pin);

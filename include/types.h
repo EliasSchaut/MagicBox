@@ -35,21 +35,82 @@ struct Position {
 
 enum class Choice {  A = 'A',  B = 'B',  C = 'C',  D = 'D', NONE = '\0' };
 
-struct StoryNode {
-    const char* display;
-    int gameStateID;
-    StoryNode* a;
-    StoryNode* b;
-    StoryNode* c;
-    StoryNode* d;
-    void (*onEnter)();
-    const char* expectedPin;
-    StoryNode* pinSuccess;
+struct MapTarget {
+    int x;
+    int y;
+    int storyID;
 };
 
-struct MapTarget {
-    Position pos;
-    int storyID{};
+struct StoryNode;
+
+// StoryNode is a plain aggregate authored with designated initializers.
+// avr-gcc 7's caveat: you cannot SKIP a field in the middle of a designated
+// initializer list, but you CAN skip trailing fields (they get zero-initialized
+// → nullptr / false / 0).
+//
+// So the field order is chosen so the most common scenarios trail-skip cleanly:
+//   - "just choices"                 → set up to .choiceD, trail-skip
+//   - "choices + map"                → set up to .mapTargets, trail-skip
+//   - "choices + map + pin"          → set up to .pinSuccess, trail-skip
+//   - anything fancier               → use .onEnter (custom callback)
+//
+// Use the helper macros below (CHOICES, MAP_TARGETS, MAP_OFF, ...) so you
+// don't have to manually fill the gap with nullptr/0/false when you want to
+// reach a later field.
+struct StoryNode {
+    int id;
+    const char* display;
+
+    // Choices — nullptr = invalid choice.
+    StoryNode* choiceA;
+    StoryNode* choiceB;
+    StoryNode* choiceC;
+    StoryNode* choiceD;
+
+    // Map config — applied declaratively on enter.
+    // Authored via the MAP_TARGETS(...) / MAP_OFF macros so you don't manage
+    // mapTargetCount by hand.
+    bool activateMap;
+    int mapTargetCount;
+    const MapTarget* mapTargets;
+
+    // PIN entry. Both nullptr → node accepts no PIN.
+    const char* expectedPin;
+    StoryNode* pinSuccess;
+
+    // Escape hatch for anything the declarative fields don't cover (e.g.
+    // teleporting the player via mapTeleportPlayer(x, y)). Runs after the
+    // declarative map config is applied.
+    void (*onEnter)();
 };
+
+// ----- Authoring helpers ---------------------------------------------------
+
+// All four choices at once. Pass nullptr where there is no transition.
+#define CHOICES(a, b, c, d) \
+    .choiceA = (a), .choiceB = (b), .choiceC = (c), .choiceD = (d)
+
+// Short-hand: no choices at all (e.g. dead-end intermediate node).
+#define NO_CHOICES CHOICES(nullptr, nullptr, nullptr, nullptr)
+
+// Activate the map and define its blinking targets in one go. Each argument
+// is a {x, y, storyID} brace-initialiser:
+//   MAP_TARGETS({4, 4, 2}, {7, 0, 5})
+#define MAP_TARGETS(...) \
+    .activateMap = true, \
+    .mapTargetCount = (int)(sizeof((const MapTarget[]){__VA_ARGS__}) / sizeof(MapTarget)), \
+    .mapTargets = (const MapTarget[]){__VA_ARGS__}
+
+// Explicit "this node does not show the map". Only needed when a later field
+// (PIN, onEnter) must be set on a node that has no map — designated init
+// can't skip middle fields in avr-gcc 7.
+#define MAP_OFF \
+    .activateMap = false, \
+    .mapTargetCount = 0, \
+    .mapTargets = nullptr
+
+// PIN entry pair.
+#define PIN(expected, successNode) \
+    .expectedPin = (expected), .pinSuccess = (successNode)
 
 #endif //MAGICBOX_TYPES_H

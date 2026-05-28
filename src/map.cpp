@@ -21,7 +21,7 @@ namespace {
 
     int findTargetIndex(int x, int y) {
         for (int i = 0; i < targetCount; i++) {
-            if (targets[i].pos.x == x && targets[i].pos.y == y) return i;
+            if (targets[i].x == x && targets[i].y == y) return i;
         }
         return -1;
     }
@@ -31,7 +31,7 @@ namespace {
         if (mapActive) {
             if (blinkOn) {
                 for (int i = 0; i < targetCount; i++) {
-                    newFrame[targets[i].pos.x] |= (byte)(B10000000 >> targets[i].pos.y);
+                    newFrame[targets[i].x] |= (byte)(B10000000 >> targets[i].y);
                 }
             }
             newFrame[playerPos.x] |= (byte)(B10000000 >> playerPos.y);
@@ -81,7 +81,8 @@ void mapSetTarget(int x, int y, int storyID) {
     if (idx >= 0) {
         targets[idx].storyID = storyID;
     } else if (targetCount < MAX_TARGETS) {
-        targets[targetCount].pos = Position(x, y);
+        targets[targetCount].x = x;
+        targets[targetCount].y = y;
         targets[targetCount].storyID = storyID;
         targetCount++;
     }

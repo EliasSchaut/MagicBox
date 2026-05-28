@@ -12,9 +12,7 @@ class StoryGraph {
 public:
     StoryGraph();
     void addNode(StoryNode* node);
-    void connectNodes(int fromID, Choice choice, int toID);
-    void connectPin(int fromID, const char* pin, int toID);
-    void jumpToNode(int stateID);
+    void jumpToNode(int id);
     StoryNode* getCurrentNode() const { return currentNode; }
     void handleChoice(Choice choice);
     void handlePin(const char* pin);
