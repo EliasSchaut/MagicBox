@@ -79,14 +79,22 @@ void StoryGraph::handleChoice(Choice choice) {
 }
 
 void StoryGraph::handlePin(const char* pin) {
+  // Echo the entered combination (same format as printSerial,
+  // (but without snprintf, so as not to involve the printf machinery).
+  Serial.println(F("\n--------------------------------"));
+  Serial.print(F("Eingegebene Kombination: "));
+  Serial.println(pin);
+  Serial.println();
+  Serial.println();
+
   if (!currentNode || !currentNode->expectedPin || !currentNode->pinSuccess) {
-    printSerial("No PIN expected here");
+    printSerial("Hier wird keine Kombination erwartet");
     return;
   }
   if (strcmp(pin, currentNode->expectedPin) == 0) {
     enterNode(currentNode->pinSuccess);
   } else {
-    printSerial("Wrong PIN");
+    printSerial("Kombination ungültig");
   }
 }
 // -----------------
@@ -102,7 +110,7 @@ void printCurrent() {
 // storyBegin() is defined in story_content.cpp (authored content).
 
 void printWrongChoice() {
-  printSerial("You can't make this choice\n");
+  printSerial("Ungültige Auswahl");
 }
 
 void handleChoice(Choice choice) {
