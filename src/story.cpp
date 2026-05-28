@@ -40,7 +40,7 @@ void StoryGraph::enterNode(StoryNode* node) {
     // (and/or onEnter) may turn it back on.
     mapDisable();
 
-    printSerial(node->display);
+    printSerialBlock(node->display);
 
     // Apply declarative map config.
     if (node->mapTargets) {
@@ -79,22 +79,20 @@ void StoryGraph::handleChoice(Choice choice) {
 }
 
 void StoryGraph::handlePin(const char* pin) {
-  // Echo the entered combination (same format as printSerial,
-  // (but without snprintf, so as not to involve the printf machinery).
-  Serial.println(F("\n--------------------------------"));
-  Serial.print(F("Eingegebene Kombination: "));
-  Serial.println(pin);
-  Serial.println();
-  Serial.println();
+  // Echo der eingegebenen Kombination.
+  printSerial("Eingegebene Kombination: ");
+  printSerial(pin);
 
   if (!currentNode || !currentNode->expectedPin || !currentNode->pinSuccess) {
-    printSerial("Hier wird keine Kombination erwartet");
+    printSerial("\nHier wird keine Kombination erwartet! Sende Nachricht erneut:");
+    printCurrent();
     return;
   }
   if (strcmp(pin, currentNode->expectedPin) == 0) {
     enterNode(currentNode->pinSuccess);
   } else {
-    printSerial("Kombination ungültig");
+    printSerial("\nKombination ungültig! Sende Nachricht erneut:");
+    printCurrent();
   }
 }
 // -----------------
@@ -104,13 +102,14 @@ void StoryGraph::handlePin(const char* pin) {
 // Handler
 // -----------------
 void printCurrent() {
-  if (storyGraph.getCurrentNode()) printSerial(storyGraph.getCurrentNode()->display);
+  if (storyGraph.getCurrentNode()) printSerialBlock(storyGraph.getCurrentNode()->display);
 }
 
 // storyBegin() is defined in story_content.cpp (authored content).
 
 void printWrongChoice() {
-  printSerial("Ungültige Auswahl");
+  printSerial("Ungültige Auswahl! Sende Nachricht erneut:");
+  printCurrent();
 }
 
 void handleChoice(Choice choice) {

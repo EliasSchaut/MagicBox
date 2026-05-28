@@ -15,7 +15,14 @@ inline Choice charToChoice(char key) {
     return Choice::NONE;
 }
 
+// Plain output — just prints the text, no decoration.
 inline void printSerial(const char* output) {
+    Serial.print(output);
+}
+
+// Block output — wraps the text in a separator + trailing blank lines, for
+// rendering larger paragraphs (e.g. story node text).
+inline void printSerialBlock(const char* output) {
     Serial.println(F("\n--------------------------------"));
     Serial.println(output);
     Serial.println();
@@ -23,17 +30,17 @@ inline void printSerial(const char* output) {
 }
 
 inline void printDirection(Direction dir) {
-    Serial.print(F("Moved: "));
+    printSerial("Moved: ");
     switch (dir) {
-        case Direction::UP: Serial.println(F("UP"));
+        case Direction::UP: printSerial("UP\n");
             break;
-        case Direction::DOWN: Serial.println(F("DOWN"));
+        case Direction::DOWN: printSerial("DOWN\n");
             break;
-        case Direction::LEFT: Serial.println(F("LEFT"));
+        case Direction::LEFT: printSerial("LEFT\n");
             break;
-        case Direction::RIGHT: Serial.println(F("RIGHT"));
+        case Direction::RIGHT: printSerial("RIGHT\n");
             break;
-        case Direction::NONE: Serial.println(F("NONE"));
+        case Direction::NONE: printSerial("NONE\n");
             break;
     }
 }

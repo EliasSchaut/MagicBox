@@ -51,7 +51,7 @@ Author nodes with designated initializers + the macros in `types.h`:
 
 ### Types
 
-`include/types.h` is the shared vocabulary: `Direction`, `Position` (bounds-checked `move()` clamped 0–7), `Choice`, `MapTarget`, and `StoryNode` (a plain aggregate — see macros above). Inline helpers (`charToChoice`, `printSerial`, `printDirection`) are header-only in `include/utils.h`.
+`include/types.h` is the shared vocabulary: `Direction`, `Position` (bounds-checked `move()` clamped 0–7), `Choice`, `MapTarget`, and `StoryNode` (a plain aggregate — see macros above). Inline helpers (`charToChoice`, `printSerial`, `printSerialBlock`, `printDirection`) are header-only in `include/utils.h`.
 
 ### Visual editor
 
@@ -64,5 +64,5 @@ Author nodes with designated initializers + the macros in `types.h`:
 ## Conventions
 
 - Headers use uppercase include guards (`MAGICBOX_*_H`); match the pattern when adding new ones.
-- Serial output uses `printSerial()` from `utils.h` (wraps lines with a separator) and `F("...")` macros to keep strings in flash — preserve this when adding messages.
+- Serial output uses the helpers in `utils.h`: `printSerialBlock()` wraps a paragraph in a separator + blank lines (story node text, result messages); `printSerial()` just prints raw text (inline echoes). Prefer these over raw `Serial.print*` in project code (`src/`); vendored `lib/` code is left untouched.
 - The LED matrix is addressed as `lc.setLed(0, x, y, on)`. `Position::move()` already clamps to the 0–7 grid.
