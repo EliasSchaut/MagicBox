@@ -9,6 +9,12 @@ namespace {
     Position playerPos{0, 0};
     bool mapActive = false;
 
+    // After walking onto a target that re-activates the map, ignore movement
+    // until the joystick returns to neutral once — otherwise a still-held
+    // direction carries over and the player slides an extra step past the
+    // target instead of stopping on it.
+    bool armed = true;
+
     MapTarget targets[MAX_TARGETS];
     int targetCount = 0;
 
@@ -62,6 +68,7 @@ namespace {
 
 void mapEnable() {
     mapActive = true;
+    armed = true;
     blinkOn = true;
     lastBlinkToggle = millis();
     renderFrame();
@@ -138,14 +145,23 @@ void mapWalk() {
     if (!mapActive) return;
 
     Direction moveDir = readJoystrickDirection();
-    if (moveDir != Direction::NONE) {
+
+    if (!armed) {
+        // Wait for the stick to return to neutral before accepting input again.
+        if (moveDir == Direction::NONE) armed = true;
+    } else if (moveDir != Direction::NONE) {
         Position next = playerPos;
         next.move(moveDir);
         bool moved = (next.x != playerPos.x || next.y != playerPos.y);
         if (moved && !isBlockerAt(next.x, next.y)) {
             playerPos = next;
             renderFrame();
-            if (checkCollision()) return;
+            if (checkCollision()) {
+                // The target may have re-activated the map; require a neutral
+                // joystick before walking again so we stop on the target.
+                armed = false;
+                return;
+            }
             delay(MOVE_DELAY_MS);
             return;
         }
