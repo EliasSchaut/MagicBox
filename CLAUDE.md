@@ -42,6 +42,7 @@ Author nodes with designated initializers + the macros in `types.h`:
 - `CHOICES(a,b,c,d)` — the four choice targets (`nullptr` = invalid → `printWrongChoice()`). Implicitly sets `.next = nullptr`. `NO_CHOICES` = all `nullptr`.
 - `GOTO(&node)` — **direct transition**: after the display text, auto-advance to `node` without input (used to merge branches). `enterNode` follows the `next` chain in a loop (guarded to 64 hops).
 - `MAP_TARGETS({x,y,storyID}, …)` — activate the map + register blinking targets; `MAP_OFF` is the explicit gap-filler. `PIN("1234", &successNode)` — PIN entry.
+- `.display` is a `const __FlashStringHelper*` pointing into **flash** (not RAM — keeps long paragraphs out of the 8 KB SRAM). Author it as `.display = FSTR(T_node)` with a preceding `const char T_node[] PROGMEM = "...";`. The editor's "Export C++" emits one PROGMEM array per node automatically.
 
 `enterNode()` on each transition: `mapDisable()` → print display → apply map config → run optional `onEnter` (escape-hatch callback, e.g. `mapTeleportPlayer(x,y)`) → follow `next`.
 

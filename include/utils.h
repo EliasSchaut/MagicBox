@@ -16,13 +16,23 @@ inline Choice charToChoice(char key) {
 }
 
 // Plain output — just prints the text, no decoration.
+// Overloaded for RAM strings (const char*) and flash strings (F()/FSTR()).
 inline void printSerial(const char* output) {
+    Serial.print(output);
+}
+inline void printSerial(const __FlashStringHelper* output) {
     Serial.print(output);
 }
 
 // Block output — wraps the text in a separator + trailing blank lines, for
 // rendering larger paragraphs (e.g. story node text).
 inline void printSerialBlock(const char* output) {
+    Serial.println(F("\n--------------------------------"));
+    Serial.println(output);
+    Serial.println();
+    Serial.println();
+}
+inline void printSerialBlock(const __FlashStringHelper* output) {
     Serial.println(F("\n--------------------------------"));
     Serial.println(output);
     Serial.println();

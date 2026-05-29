@@ -60,7 +60,10 @@ struct StoryNode;
 // reach a later field.
 struct StoryNode {
     int id;
-    const char* display;
+    // Pointer to the display text in FLASH (PROGMEM), not RAM — keeps long
+    // paragraphs out of the 8 KB SRAM. Author it with FSTR(progmemArray); the
+    // editor emits a `const char NAME[] PROGMEM = "...";` per node.
+    const __FlashStringHelper* display;
 
     // Direct transition: if non-null, after this node's display text (and map
     // config / onEnter) is shown, the engine immediately continues to `next`
@@ -92,6 +95,11 @@ struct StoryNode {
 };
 
 // ----- Authoring helpers ---------------------------------------------------
+
+// Wrap a PROGMEM char array as the flash-resident display pointer:
+//   const char T_foo[] PROGMEM = "...";
+//   StoryNode foo = { .id = 1, .display = FSTR(T_foo), ... };
+#define FSTR(progmemArray) reinterpret_cast<const __FlashStringHelper*>(progmemArray)
 
 // Direct transition / merge node: show this node's display text, then continue
 // straight to `node` (no input needed). Place right after .display; the rest of

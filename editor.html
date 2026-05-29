@@ -1286,6 +1286,13 @@ function generateCpp() {
   }
   out.push('');
 
+  // Display texts — kept in flash (PROGMEM), not RAM.
+  out.push('// ---- display texts (stored in flash / PROGMEM, not RAM) ----');
+  for (const n of state.nodes) {
+    out.push(`const char ${textName(n)}[] PROGMEM = ${cppString(n.display)};`);
+  }
+  out.push('');
+
   // Node literals.
   out.push('// ---- nodes ----');
   for (const n of state.nodes) {
@@ -1311,7 +1318,7 @@ function cppForNode(n) {
   const lines = [];
   lines.push(`StoryNode ${n.name} = {`);
   lines.push(`    .id = ${n.id},`);
-  lines.push(`    .display = ${cppString(n.display)},`);
+  lines.push(`    .display = FSTR(${textName(n)}),`);
 
   const ref = id => id !== null && id !== undefined
     ? '&' + (getNode(id)?.name ?? `/* missing #${id} */ nullptr`)
@@ -1387,6 +1394,10 @@ function hasOnEnterBody(n) {
 
 function onEnterName(n) {
   return 'onEnter_' + cppIdent(n.name);
+}
+
+function textName(n) {
+  return 'T_' + cppIdent(n.name);
 }
 
 function cppString(s) {
