@@ -35,6 +35,11 @@ struct Position {
 
 enum class Choice {  A = 'A',  B = 'B',  C = 'C',  D = 'D', NONE = '\0' };
 
+// A map cell. storyID >= 0 → a blinking target that jumps to that node when
+// the player walks onto it. storyID == MAP_BLOCK → a constant-lit blocker the
+// player cannot walk through (no story transition).
+constexpr int MAP_BLOCK = -1;
+
 struct MapTarget {
     int x;
     int y;
@@ -116,9 +121,10 @@ struct StoryNode {
 // Short-hand: no choices at all (e.g. dead-end intermediate node).
 #define NO_CHOICES CHOICES(nullptr, nullptr, nullptr, nullptr)
 
-// Activate the map and define its blinking targets in one go. Each argument
-// is a {x, y, storyID} brace-initialiser:
-//   MAP_TARGETS({4, 4, 2}, {7, 0, 5})
+// Activate the map and define its cells in one go. Each argument is a
+// {x, y, storyID} brace-initialiser. Use a real node id for a blinking target,
+// or MAP_BLOCK for a constant-lit blocker you cannot walk through:
+//   MAP_TARGETS({4, 4, 2}, {7, 0, 5}, {3, 3, MAP_BLOCK})
 #define MAP_TARGETS(...) \
     .activateMap = true, \
     .mapTargetCount = (int)(sizeof((const MapTarget[]){__VA_ARGS__}) / sizeof(MapTarget)), \

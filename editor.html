@@ -327,6 +327,7 @@ function migrateNode(n) {
   }
   if (n.next === undefined) n.next = null;
   if (n.nextEnabled === undefined) n.nextEnabled = n.next != null;
+  if (!Array.isArray(n.mapBlockers)) n.mapBlockers = [];
 }
 
 function refreshIdCounter() {
@@ -366,6 +367,7 @@ function makeNode(x, y) {
     nextEnabled: false,    // auto-advance after display
     activateMap: false,
     mapTargets: [],
+    mapBlockers: [],       // constant-lit obstacles {x,y} you can't walk through
     expectedPin: '',
     pinSuccess: null,
     onEnter: '',
@@ -538,7 +540,7 @@ function renderNode(node) {
   }
 
   // Map section
-  if (node.activateMap || node.mapTargets.length > 0) {
+  if (node.activateMap || node.mapTargets.length > 0 || node.mapBlockers.length > 0) {
     const hdr = document.createElement('div');
     hdr.className = 'row border-t border-slate-200 dark:border-slate-700 mt-1 pt-2';
     hdr.innerHTML = `<span class="text-emerald-600 dark:text-emerald-400 text-xs">🗺 Map ${node.activateMap ? '(on)' : '(off)'}</span><span></span>`;
@@ -559,6 +561,17 @@ function renderNode(node) {
       p.dataset.outKind = 'map';
       p.dataset.outIdx  = i;
       row.appendChild(p);
+      el.appendChild(row);
+    }
+    // Blockers (no port — they don't link to a node).
+    for (const b of node.mapBlockers) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = `
+        <span class="text-amber-500 text-[11px]">🧱</span>
+        <span class="font-mono text-[11px]">(${b.x},${b.y})</span>
+        <span class="meta">blocker</span>
+      `;
       el.appendChild(row);
     }
   }
@@ -752,6 +765,23 @@ function renderProps() {
     </div>
     <button onclick="addTarget(${n.id})" class="text-xs px-2 py-1 bg-slate-200 dark:bg-slate-700 rounded">+ Map target</button>
 
+    <h3 class="font-semibold text-xs mb-2 mt-3 border-t border-slate-200 dark:border-slate-700 pt-3">MAP BLOCKERS</h3>
+    <p class="text-[11px] text-slate-500 dark:text-slate-400 mb-2">Constant-lit cells the player can't walk through (e.g. walls). Persist until <code>mapClearBlockers()</code>.</p>
+    <div class="space-y-1 mb-2">
+      ${n.mapBlockers.map((b, i) => `
+          <div class="flex items-center gap-1 text-xs">
+            <span class="text-amber-500">🧱</span>
+            <span>x</span>
+            <input type="number" min="0" max="7" value="${b.x}" oninput="updBlocker(${n.id}, ${i}, 'x', parseInt(this.value)||0)" style="width:3rem">
+            <span>y</span>
+            <input type="number" min="0" max="7" value="${b.y}" oninput="updBlocker(${n.id}, ${i}, 'y', parseInt(this.value)||0)" style="width:3rem">
+            <span class="flex-1"></span>
+            <button onclick="rmBlocker(${n.id}, ${i})" class="px-1.5 text-red-500">✕</button>
+          </div>
+        `).join('')}
+    </div>
+    <button onclick="addBlocker(${n.id})" class="text-xs px-2 py-1 bg-slate-200 dark:bg-slate-700 rounded">+ Map blocker</button>
+
     <h3 class="font-semibold text-xs mb-2 mt-3 border-t border-slate-200 dark:border-slate-700 pt-3">PIN</h3>
     <label class="block text-xs mb-1">Expected PIN (empty = no PIN expected)</label>
     <input type="text" value="${esc(n.expectedPin || '')}" oninput="update(${n.id}, 'expectedPin', this.value)" placeholder="e.g. 1234" class="mb-2">
@@ -876,6 +906,15 @@ function updTarget(id, i, field, val) {
   const t = getNode(id).mapTargets[i];
   if (!t) return;
   t[field] = Math.max(0, Math.min(7, val));
+  renderWorld();    // skip props re-render to preserve input focus
+  persist();
+}
+function addBlocker(id)   { getNode(id).mapBlockers.push({ x: 0, y: 0 }); render(); persist(); }
+function rmBlocker(id, i) { getNode(id).mapBlockers.splice(i, 1); render(); persist(); }
+function updBlocker(id, i, field, val) {
+  const b = getNode(id).mapBlockers[i];
+  if (!b) return;
+  b[field] = Math.max(0, Math.min(7, val));
   renderWorld();    // skip props re-render to preserve input focus
   persist();
 }
@@ -1167,7 +1206,9 @@ function estimateNodeHeight(n) {
   if (n.nextEnabled) h += ROW;
   for (const k of ['A','B','C','D']) if (n.choicesEnabled?.[k]) h += ROW;
   if (n.expectedPin) h += ROW;
-  if (n.activateMap || n.mapTargets.length > 0) h += 24 + n.mapTargets.length * ROW;
+  if (n.activateMap || n.mapTargets.length > 0 || n.mapBlockers.length > 0) {
+    h += 24 + (n.mapTargets.length + n.mapBlockers.length) * ROW;
+  }
   if (n.onEnter && n.onEnter.trim()) h += 24;
   return h + 10;
 }
@@ -1227,6 +1268,7 @@ function handleImport(e) {
           mapTargets:   (n.mapTargets || []).map(t => ({
                           x: t.x ?? 0, y: t.y ?? 0, target: t.target ?? null
                         })),
+          mapBlockers:  (n.mapBlockers || []).map(b => ({ x: b.x ?? 0, y: b.y ?? 0 })),
           expectedPin:  n.expectedPin || '',
           pinSuccess:   n.pinSuccess ?? null,
           onEnter:      n.onEnter    || '',
@@ -1325,8 +1367,14 @@ function cppForNode(n) {
     : 'nullptr';
 
   const validTargets = n.mapTargets.filter(t => t.target !== null);
+  const blockers     = n.mapBlockers || [];
+  // Targets and blockers share one MapTarget array; blockers use MAP_BLOCK.
+  const mapEntries = [
+    ...validTargets.map(t => `{${t.x}, ${t.y}, ${getNode(t.target).id}}`),
+    ...blockers.map(b => `{${b.x}, ${b.y}, MAP_BLOCK}`),
+  ];
   const hasNext    = !!(n.nextEnabled && n.next !== null && n.next !== undefined);
-  const hasMap     = n.activateMap || validTargets.length > 0;
+  const hasMap     = n.activateMap || mapEntries.length > 0;
   const hasPin     = !!(n.expectedPin && n.pinSuccess !== null);
   const hasOnEnter = hasOnEnterBody(n);
 
@@ -1347,20 +1395,18 @@ function cppForNode(n) {
 
   // MAP section
   if (hasMap) {
-    if (validTargets.length > 0) {
-      const tStr = validTargets
-        .map(t => `{${t.x}, ${t.y}, ${getNode(t.target).id}}`)
-        .join(', ');
+    if (mapEntries.length > 0) {
+      const tStr = mapEntries.join(', ');
       if (n.activateMap) {
         lines.push(`    MAP_TARGETS(${tStr}),`);
       } else {
-        // targets set but map not activated — emit explicit fields
+        // cells set but map not activated — emit explicit fields
         lines.push(`    .activateMap = false,`);
-        lines.push(`    .mapTargetCount = ${validTargets.length},`);
+        lines.push(`    .mapTargetCount = ${mapEntries.length},`);
         lines.push(`    .mapTargets = (const MapTarget[]){${tStr}},`);
       }
     } else {
-      // activateMap=true but no targets
+      // activateMap=true but no cells
       lines.push(`    .activateMap = true,`);
       lines.push(`    .mapTargetCount = 0,`);
       lines.push(`    .mapTargets = nullptr,`);

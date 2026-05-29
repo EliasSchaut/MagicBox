@@ -2,7 +2,7 @@
 #include "story.h"
 
 namespace {
-    constexpr int MAX_TARGETS = 8;
+    constexpr int MAX_TARGETS = 40;   // shared by blinking targets and blockers
     constexpr unsigned long BLINK_INTERVAL_MS = 250;
     constexpr unsigned long MOVE_DELAY_MS = 300;
 
@@ -26,11 +26,17 @@ namespace {
         return -1;
     }
 
+    bool isBlockerAt(int x, int y) {
+        int idx = findTargetIndex(x, y);
+        return idx >= 0 && targets[idx].storyID == MAP_BLOCK;
+    }
+
     void renderFrame() {
         byte newFrame[8] = {0};
         if (mapActive) {
-            if (blinkOn) {
-                for (int i = 0; i < targetCount; i++) {
+            for (int i = 0; i < targetCount; i++) {
+                // Blockers are always lit; targets blink.
+                if (targets[i].storyID == MAP_BLOCK || blinkOn) {
                     newFrame[targets[i].x] |= (byte)(B10000000 >> targets[i].y);
                 }
             }
@@ -48,6 +54,7 @@ namespace {
         int idx = findTargetIndex(playerPos.x, playerPos.y);
         if (idx < 0) return false;
         int storyID = targets[idx].storyID;
+        if (storyID == MAP_BLOCK) return false;   // blockers never trigger a story
         setGameState(storyID);
         return true;
     }
@@ -104,6 +111,29 @@ void mapClearTargets() {
     if (mapActive) renderFrame();
 }
 
+void mapSetBlocker(int x, int y) {
+    mapSetTarget(x, y, MAP_BLOCK);
+}
+
+void mapRemoveBlocker(int x, int y) {
+    int idx = findTargetIndex(x, y);
+    if (idx >= 0 && targets[idx].storyID == MAP_BLOCK) {
+        mapRemoveTarget(x, y);
+    }
+}
+
+void mapClearBlockers() {
+    // Remove only blocker entries, keeping real targets (progress) intact.
+    int w = 0;
+    for (int i = 0; i < targetCount; i++) {
+        if (targets[i].storyID != MAP_BLOCK) {
+            targets[w++] = targets[i];
+        }
+    }
+    targetCount = w;
+    if (mapActive) renderFrame();
+}
+
 void mapWalk() {
     if (!mapActive) return;
 
@@ -111,7 +141,8 @@ void mapWalk() {
     if (moveDir != Direction::NONE) {
         Position next = playerPos;
         next.move(moveDir);
-        if (next.x != playerPos.x || next.y != playerPos.y) {
+        bool moved = (next.x != playerPos.x || next.y != playerPos.y);
+        if (moved && !isBlockerAt(next.x, next.y)) {
             playerPos = next;
             renderFrame();
             if (checkCollision()) return;

@@ -50,6 +50,8 @@ Author nodes with designated initializers + the macros in `types.h`:
 
 `map.cpp` exposes `mapEnable/mapDisable/mapIsActive`, `mapSetTarget(x,y,storyID)` (add or overwrite — targets persist across disables for progress), `mapRemoveTarget`, `mapClearTargets`, `mapTeleportPlayer`. Walking onto a target calls `setGameState(storyID)` → jumps to that node and disables the map. Rendering uses a cached `frameBuffer[8]` + `lc.setRow` (atomic, flicker-free); targets blink via `millis()`.
 
+**Blockers** are map cells with `storyID == MAP_BLOCK` (sentinel `-1`), stored in the same table as targets: they render **constant-lit** (no blink), the player cannot walk onto them, and they trigger no story. Set via `mapSetBlocker(x,y)` / declaratively via `MAP_TARGETS({x,y,MAP_BLOCK})`; remove with `mapRemoveBlocker(x,y)` or `mapClearBlockers()` (clears only blockers, keeps real targets). The editor has a "Map blockers" list per node that exports as `MAP_BLOCK` entries.
+
 ### Types
 
 `include/types.h` is the shared vocabulary: `Direction`, `Position` (bounds-checked `move()` clamped 0–7), `Choice`, `MapTarget`, and `StoryNode` (a plain aggregate — see macros above). Inline helpers (`charToChoice`, `printSerial`, `printSerialBlock`, `printDirection`) are header-only in `include/utils.h`.

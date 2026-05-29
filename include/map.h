@@ -20,4 +20,10 @@ void mapSetTarget(int x, int y, int storyID);
 void mapRemoveTarget(int x, int y);
 void mapClearTargets();
 
+// Blockers: constant-lit cells the player cannot walk through. Stored in the
+// same table as targets (with storyID == MAP_BLOCK).
+void mapSetBlocker(int x, int y);
+void mapRemoveBlocker(int x, int y);
+void mapClearBlockers();
+
 #endif //MAGICBOX_MAP_H
