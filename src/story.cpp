@@ -1,11 +1,49 @@
 #include "story.h"
 #include "map.h"
 #include <string.h>
+#include <EEPROM.h>
 
 // -----------------
 // Classes & Globals
 // -----------------
 StoryGraph storyGraph;
+// -----------------
+
+
+// -----------------
+// Progress persistence (EEPROM)
+// -----------------
+// The current node is saved to EEPROM on every transition so the game resumes
+// after a power loss. A per-build signature (FIRMWARE_BUILD_ID, injected by
+// inject_build_id.py at compile time) is stored alongside: when new firmware is
+// flashed the signature no longer matches, so the save is ignored and the story
+// restarts from the beginning — exactly what we want on an update.
+#ifndef FIRMWARE_BUILD_ID
+#define FIRMWARE_BUILD_ID 0UL   // fallback (e.g. for IDE indexing); real value injected at build
+#endif
+
+namespace {
+  constexpr int SAVE_ADDR = 0;
+
+  struct SaveData {
+    uint32_t buildId;
+    int16_t  nodeId;
+  };
+
+  void saveProgress(int nodeId) {
+    SaveData d{ (uint32_t)FIRMWARE_BUILD_ID, (int16_t)nodeId };
+    EEPROM.put(SAVE_ADDR, d);   // update-based: only writes bytes that changed
+  }
+
+  // Saved node id, or -1 if there is no valid save for THIS firmware build
+  // (fresh upload, or uninitialised/corrupted EEPROM).
+  int loadProgress() {
+    SaveData d{};
+    EEPROM.get(SAVE_ADDR, d);
+    if (d.buildId != (uint32_t)FIRMWARE_BUILD_ID) return -1;
+    return d.nodeId;
+  }
+}
 // -----------------
 //
 // Note: the authored story content (node literals + storyBegin) lives in
@@ -57,6 +95,10 @@ void StoryGraph::enterNode(StoryNode* node) {
     // Direct transition: continue to `next` without waiting for input.
     node = node->next;
   }
+
+  // Persist the resting node so a power loss resumes here (not intermediate
+  // nodes of a `next` chain).
+  if (currentNode) saveProgress(currentNode->id);
 }
 
 void StoryGraph::jumpToNode(int id) {
@@ -122,5 +164,12 @@ void handlePin(const char* pin) {
 
 void setGameState(int state) {
   storyGraph.jumpToNode(state);
+}
+
+void resumeOrStart(int startId) {
+  int saved = loadProgress();
+  // A matching buildId guarantees the saved id is a node of this firmware, so
+  // no extra validity check is needed (we only ever save real node ids).
+  storyGraph.jumpToNode(saved >= 0 ? saved : startId);
 }
 // -----------------

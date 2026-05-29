@@ -18,7 +18,7 @@ pio device monitor -b 9600       # open serial monitor (game I/O)
 pio device monitor -b 9600 -e megaatmega2560
 ```
 
-The single configured environment is `[env:megaatmega2560]` in `platformio.ini` (platform `atmelavr`, framework `arduino`). `.pio/` is the build cache (gitignored). `build_flags = -std=gnu++17` (unflagging `gnu++11`) is **required** — `StoryNode` literals use designated initializers.
+The single configured environment is `[env:megaatmega2560]` in `platformio.ini` (platform `atmelavr`, framework `arduino`). `.pio/` is the build cache (gitignored). `build_flags = -std=gnu++17` (unflagging `gnu++11`) is **required** — `StoryNode` literals use designated initializers. `extra_scripts = pre:inject_build_id.py` injects a fresh `FIRMWARE_BUILD_ID` each build (used by the EEPROM save below; this also forces a project recompile each build).
 
 > avr-gcc 7 caveat: designated initializers must set a **contiguous prefix** of struct fields (in order, no gaps); trailing fields may be omitted (zero-initialized). Hence the authoring macros below.
 
@@ -44,7 +44,11 @@ Author nodes with designated initializers + the macros in `types.h`:
 - `MAP_TARGETS({x,y,storyID}, …)` — activate the map + register blinking targets; `MAP_OFF` is the explicit gap-filler. `PIN("1234", &successNode)` — PIN entry.
 - `.display` is a `const __FlashStringHelper*` pointing into **flash** (not RAM — keeps long paragraphs out of the 8 KB SRAM). Author it as `.display = FSTR(T_node)` with a preceding `const char T_node[] PROGMEM = "...";`. The editor's "Export C++" emits one PROGMEM array per node automatically.
 
-`enterNode()` on each transition: `mapDisable()` → print display → apply map config → run optional `onEnter` (escape-hatch callback, e.g. `mapTeleportPlayer(x,y)`) → follow `next`.
+`enterNode()` on each transition: `mapDisable()` → print display → apply map config → run optional `onEnter` (escape-hatch callback, e.g. `mapTeleportPlayer(x,y)`) → follow `next` → **save the resting node id to EEPROM**.
+
+### Progress persistence (EEPROM)
+
+`enterNode()` writes `{FIRMWARE_BUILD_ID, currentNode->id}` to EEPROM (addr 0, `EEPROM.put` = update-based, no needless wear). The generated `storyBegin()` ends with `resumeOrStart(startId)` (not `jumpToNode`): on boot it jumps to the saved node iff the stored build id matches this firmware's `FIRMWARE_BUILD_ID`. So a **power loss resumes** where you were, but a **fresh flash** (new build id from `inject_build_id.py`) ignores the stale save and restarts. Only the node id is saved — transient map state (player position, dynamically-added targets/blockers) is reconstructed from the resumed node's declarative config, not restored.
 
 ### Map ↔ Story integration
 

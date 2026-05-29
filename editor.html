@@ -1350,7 +1350,9 @@ function generateCpp() {
   }
   out.push('');
   const start = state.startNodeId !== null ? getNode(state.startNodeId) : null;
-  out.push(`  storyGraph.jumpToNode(${start ? start.id : 0});`);
+  // resumeOrStart: continue from the EEPROM-saved node after a power loss, or
+  // start here on a fresh firmware flash.
+  out.push(`  resumeOrStart(${start ? start.id : 0});`);
   out.push('}');
 
   return out.join('\n');

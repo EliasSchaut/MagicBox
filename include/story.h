@@ -36,4 +36,8 @@ void handleChoice(Choice choice);
 void handlePin(const char* pin);
 void setGameState(int state);
 
+// Jump to the saved node from a previous power cycle if one exists for THIS
+// firmware build (EEPROM), otherwise start at startId. Called from storyBegin().
+void resumeOrStart(int startId);
+
 #endif //MAGICBOX_STORY_H
