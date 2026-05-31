@@ -18,7 +18,7 @@ public:
     void handlePin(const char* pin);
 
 private:
-    StoryNode* nodes[20]{}; // Assuming a maximum of 20 nodes for this simple implementation
+    StoryNode* nodes[64]{}; // Max story nodes (id->pointer registry for findNodeByID)
     int nodeCount;
     StoryNode* currentNode;
     StoryNode* findNodeByID(int id);

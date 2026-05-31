@@ -57,7 +57,7 @@ namespace {
 StoryGraph::StoryGraph() : nodes{}, nodeCount(0), currentNode(nullptr) {}
 
 void StoryGraph::addNode(StoryNode* node) {
-  if (nodeCount < 20) nodes[nodeCount++] = node;
+  if (nodeCount < 64) nodes[nodeCount++] = node;
 }
 
 StoryNode* StoryGraph::findNodeByID(int id) {
