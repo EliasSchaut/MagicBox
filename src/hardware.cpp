@@ -54,8 +54,8 @@ Direction readJoystrickDirection() {
     JoystickData data = readJoystick();
     if (data.x < 300) return Direction::LEFT;
     if (data.x > 700) return Direction::RIGHT;
-    if (data.y < 300) return Direction::UP;
-    if (data.y > 700) return Direction::DOWN;
+    if (data.y < 300) return Direction::DOWN;
+    if (data.y > 700) return Direction::UP;
     return Direction::NONE;
 };
 // --------------
