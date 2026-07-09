@@ -1,5 +1,6 @@
 #include "story.h"
 #include "map.h"
+#include "nfc.h"
 #include <string.h>
 #include <EEPROM.h>
 
@@ -68,6 +69,11 @@ StoryNode* StoryGraph::findNodeByID(int id) {
 }
 
 void StoryGraph::enterNode(StoryNode* node) {
+  // Every transition invalidates a pending NFC request of the previous node
+  // (analogous to mapDisable below). An onEnter along the way may request a
+  // write; armNfc() at the end respects it via its nfcBusy() guard.
+  nfcCancel();
+
   // `next` chains let a node auto-advance to another after showing its text.
   // Loop instead of recursing, with a guard against cyclic `next` pointers.
   int guard = 0;
@@ -96,9 +102,21 @@ void StoryGraph::enterNode(StoryNode* node) {
     node = node->next;
   }
 
+  // Only the resting node listens for tags.
+  armNfc();
+
   // Persist the resting node so a power loss resumes here (not intermediate
   // nodes of a `next` chain).
   if (currentNode) saveProgress(currentNode->id);
+}
+
+void StoryGraph::armNfc() {
+  // A write requested by onEnter/onNfc takes priority — don't clobber it.
+  // Reads for this node are then only armed on the next transition.
+  if (nfcBusy()) return;
+  if (currentNode && (currentNode->expectedNfc || currentNode->onNfc)) {
+    nfcRequestRead(&::handleNfc); // free-function wrapper matches NfcReadCallback
+  }
 }
 
 void StoryGraph::jumpToNode(int id) {
@@ -137,6 +155,36 @@ void StoryGraph::handlePin(const char* pin) {
     printCurrent();
   }
 }
+
+void StoryGraph::handleNfc(const char* text) {
+  printSerial(F("Chip gelesen: "));
+  printSerial(text);
+  printSerial(F("\n"));
+
+  if (!currentNode) return;
+  StoryNode* node = currentNode;
+
+  // 1. onNfc first — custom logic sees every tag and may itself transition.
+  if (node->onNfc) node->onNfc(text);
+
+  // If onNfc transitioned the story, the new node's enterNode already
+  // cancelled/re-armed NFC — don't also apply the old node's gate.
+  if (currentNode != node) return;
+
+  // 2. Declarative gate: matching tag text advances to nfcSuccess.
+  if (node->expectedNfc && node->nfcSuccess) {
+    if (strcmp(text, node->expectedNfc) == 0) {
+      enterNode(node->nfcSuccess);
+      return;
+    }
+    printSerial(F("\nFalscher Chip! Versuche einen anderen:"));
+    printCurrent();
+  }
+
+  // 3. No transition happened → re-arm so the next tag is read too (the
+  // same-tag cooldown in nfc.cpp prevents immediate re-triggering).
+  armNfc();
+}
 // -----------------
 
 
@@ -160,6 +208,10 @@ void handleChoice(Choice choice) {
 
 void handlePin(const char* pin) {
   storyGraph.handlePin(pin);
+}
+
+void handleNfc(const char* text) {
+  storyGraph.handleNfc(text);
 }
 
 void setGameState(int state) {

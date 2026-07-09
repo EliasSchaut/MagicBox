@@ -58,6 +58,7 @@ struct StoryNode;
 //   - "just choices"                 → set up to .choiceD, trail-skip
 //   - "choices + map"                → set up to .mapTargets, trail-skip
 //   - "choices + map + pin"          → set up to .pinSuccess, trail-skip
+//   - "... + nfc gate"               → set up to .nfcSuccess / .onNfc, trail-skip
 //   - anything fancier               → use .onEnter (custom callback)
 //
 // Use the helper macros below (GOTO, CHOICES, MAP_TARGETS, MAP_OFF, ...) so you
@@ -92,6 +93,17 @@ struct StoryNode {
     // PIN entry. Both nullptr → node accepts no PIN.
     const char* expectedPin;
     StoryNode* pinSuccess;
+
+    // NFC tag gate — mirrors PIN. When a presented tag's stored text exactly
+    // matches expectedNfc, the story advances to nfcSuccess. Both nullptr →
+    // no tag gate. Authored via NFC("TEXT", &node).
+    const char* expectedNfc;
+    StoryNode* nfcSuccess;
+
+    // Called with the tag text for ANY tag read while resting on this node,
+    // BEFORE the expectedNfc check. Escape hatch for custom tag logic, e.g.
+    // nfcRequestWrite(...). May transition the story itself.
+    void (*onNfc)(const char* text);
 
     // Escape hatch for anything the declarative fields don't cover (e.g.
     // teleporting the player via mapTeleportPlayer(x, y)). Runs after the
@@ -141,5 +153,17 @@ struct StoryNode {
 // PIN entry pair.
 #define PIN(expected, successNode) \
     .expectedPin = (expected), .pinSuccess = (successNode)
+
+// NFC tag gate pair (advance to successNode when the presented tag's stored
+// text equals `expected`, max 15 chars).
+#define NFC(expected, successNode) \
+    .expectedNfc = (expected), .nfcSuccess = (successNode)
+
+// Explicit "no NFC on this node" gap-filler — only needed when .onEnter must
+// be set on a node without NFC (contiguous-prefix rule, see MAP_OFF).
+#define NFC_OFF \
+    .expectedNfc = nullptr, \
+    .nfcSuccess = nullptr, \
+    .onNfc = nullptr
 
 #endif //MAGICBOX_TYPES_H

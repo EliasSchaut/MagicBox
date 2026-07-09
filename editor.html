@@ -143,6 +143,7 @@
   }
   .conn-line.choice { stroke: #64748b; }
   .conn-line.pin    { stroke: #f97316; }
+  .conn-line.nfc    { stroke: #06b6d4; }
   .conn-line.map    { stroke: #10b981; }
   .conn-line.next   { stroke: #8b5cf6; stroke-dasharray: 7,4; }
   .dark .conn-line.choice { stroke: #94a3b8; }
@@ -279,7 +280,7 @@
 // State
 // ============================================================
 const state = {
-  nodes: [],                          // [{id, name, x, y, display, choices:{A,B,C,D}, activateMap, mapTargets:[{x,y,target}], expectedPin, pinSuccess, onEnter}]
+  nodes: [],                          // [{id, name, x, y, display, choices:{A,B,C,D}, activateMap, mapTargets:[{x,y,target}], expectedPin, pinSuccess, expectedNfc, nfcSuccess, onNfc, onEnter}]
   startNodeId: null,
   selectedNodeId: null,
   view: { panX: 0, panY: 0, zoom: 1 },
@@ -328,6 +329,9 @@ function migrateNode(n) {
   if (n.next === undefined) n.next = null;
   if (n.nextEnabled === undefined) n.nextEnabled = n.next != null;
   if (!Array.isArray(n.mapBlockers)) n.mapBlockers = [];
+  if (n.expectedNfc === undefined) n.expectedNfc = '';
+  if (n.nfcSuccess === undefined) n.nfcSuccess = null;
+  if (n.onNfc === undefined) n.onNfc = '';
 }
 
 function refreshIdCounter() {
@@ -370,6 +374,9 @@ function makeNode(x, y) {
     mapBlockers: [],       // constant-lit obstacles {x,y} you can't walk through
     expectedPin: '',
     pinSuccess: null,
+    expectedNfc: '',
+    nfcSuccess: null,
+    onNfc: '',
     onEnter: '',
   };
 }
@@ -399,6 +406,7 @@ function deleteNode(id) {
       if (n.choices[k] === id) n.choices[k] = null;
     }
     if (n.pinSuccess === id) n.pinSuccess = null;
+    if (n.nfcSuccess === id) n.nfcSuccess = null;
     if (n.next === id) n.next = null;
     n.mapTargets = n.mapTargets.filter(t => t.target !== id);
   }
@@ -539,6 +547,26 @@ function renderNode(node) {
     el.appendChild(row);
   }
 
+  // NFC section
+  if (node.expectedNfc) {
+    const row = document.createElement('div');
+    row.className = 'row border-t border-slate-200 dark:border-slate-700 mt-1 pt-2';
+    const t = node.nfcSuccess;
+    const tname = t !== null ? (getNode(t)?.name ?? `#${t}`) : '';
+    row.innerHTML = `
+      <span class="text-cyan-500">💳</span>
+      <span class="font-mono text-[11px]">"${esc(node.expectedNfc)}"</span>
+      <span class="meta">${t !== null ? '→ ' + esc(tname) : '—'}</span>
+    `;
+    const p = document.createElement('div');
+    p.className = 'port';
+    if (t !== null) p.classList.add('connected');
+    p.dataset.outNode = node.id;
+    p.dataset.outKind = 'nfc';
+    row.appendChild(p);
+    el.appendChild(row);
+  }
+
   // Map section
   if (node.activateMap || node.mapTargets.length > 0 || node.mapBlockers.length > 0) {
     const hdr = document.createElement('div');
@@ -576,6 +604,15 @@ function renderNode(node) {
     }
   }
 
+  // onNfc hint
+  if (node.onNfc && node.onNfc.trim()) {
+    const row = document.createElement('div');
+    row.className = 'row border-t border-slate-200 dark:border-slate-700 mt-1 pt-2';
+    const lineCount = node.onNfc.trim().split('\n').length;
+    row.innerHTML = `<span class="text-cyan-500 text-[11px]">⚡ onNfc { ${lineCount} line${lineCount === 1 ? '' : 's'} }</span><span></span>`;
+    el.appendChild(row);
+  }
+
   // onEnter hint
   if (node.onEnter && node.onEnter.trim()) {
     const row = document.createElement('div');
@@ -611,6 +648,9 @@ function renderConnections() {
     }
     if (node.expectedPin && node.pinSuccess !== null) {
       lines.push({ nodeId: node.id, kind: 'pin', targetId: node.pinSuccess });
+    }
+    if (node.expectedNfc && node.nfcSuccess !== null) {
+      lines.push({ nodeId: node.id, kind: 'nfc', targetId: node.nfcSuccess });
     }
     for (let i = 0; i < node.mapTargets.length; i++) {
       const t = node.mapTargets[i];
@@ -657,6 +697,8 @@ function portWorldPos(info) {
     selector = `[data-out-node="${info.nodeId}"][data-out-kind="choice"][data-out-key="${info.key}"]`;
   } else if (info.kind === 'pin') {
     selector = `[data-out-node="${info.nodeId}"][data-out-kind="pin"]`;
+  } else if (info.kind === 'nfc') {
+    selector = `[data-out-node="${info.nodeId}"][data-out-kind="nfc"]`;
   } else if (info.kind === 'next') {
     selector = `[data-out-node="${info.nodeId}"][data-out-kind="next"]`;
   } else if (info.kind === 'map') {
@@ -787,6 +829,23 @@ function renderProps() {
     <input type="text" value="${esc(n.expectedPin || '')}" oninput="update(${n.id}, 'expectedPin', this.value)" placeholder="e.g. 1234" class="mb-2">
     ${n.expectedPin ? `<p class="text-[11px] text-slate-500 dark:text-slate-400">Drag from PIN port (🔒) on the node to set the success target.</p>` : ''}
 
+    <h3 class="font-semibold text-xs mb-2 mt-3 border-t border-slate-200 dark:border-slate-700 pt-3">NFC</h3>
+    <label class="block text-xs mb-1">Expected tag text (empty = no NFC gate, max 15 chars)</label>
+    <input type="text" maxlength="15" value="${esc(n.expectedNfc || '')}" oninput="update(${n.id}, 'expectedNfc', this.value)" placeholder="e.g. SCHATZ" class="mb-2">
+    ${n.expectedNfc ? `<p class="text-[11px] text-slate-500 dark:text-slate-400">Drag from NFC port (💳) on the node to set the success target.</p>` : ''}
+
+    <h3 class="font-semibold text-xs mb-2 mt-3 border-t border-slate-200 dark:border-slate-700 pt-3">onNfc (custom C++)</h3>
+    <p class="text-[11px] text-slate-500 dark:text-slate-400 mb-2">
+      Runs for every tag read on this node, before the NFC gate check. On export it becomes
+      <code>static void onNfc_${esc(cppIdent(n.name))}(const char* tagText)</code> —
+      <code>tagText</code> is the text read from the tag. You can call e.g.
+      <code>nfcRequestWrite("TEXT", cb);</code>.
+    </p>
+    <div class="code-editor" id="onnfc-editor">
+      <pre aria-hidden="true"><code class="language-cpp"></code></pre>
+      <textarea id="onnfc-input" spellcheck="false" wrap="off" placeholder="// optional C++ code, e.g.&#10;printSerial(tagText);"></textarea>
+    </div>
+
     <h3 class="font-semibold text-xs mb-2 mt-3 border-t border-slate-200 dark:border-slate-700 pt-3">onEnter (custom C++)</h3>
     <p class="text-[11px] text-slate-500 dark:text-slate-400 mb-2">
       Runs after the map config is applied. Write the function <em>body</em> in C++ — on export it becomes
@@ -798,21 +857,22 @@ function renderProps() {
       <textarea id="onenter-input" spellcheck="false" wrap="off" placeholder="// optional C++ code, e.g.&#10;mapTeleportPlayer(3, 5);"></textarea>
     </div>
   `;
-  wireOnEnterEditor(n);
+  wireCodeEditor(n, 'onnfc-editor', 'onNfc');
+  wireCodeEditor(n, 'onenter-editor', 'onEnter');
 }
 
-// ----- onEnter code editor (overlay highlight) -----
-function wireOnEnterEditor(node) {
-  const wrap = document.getElementById('onenter-editor');
+// ----- C++ code editors (overlay highlight) -----
+function wireCodeEditor(node, wrapId, field) {
+  const wrap = document.getElementById(wrapId);
   if (!wrap) return;
   const ta   = wrap.querySelector('textarea');
   const code = wrap.querySelector('code');
 
-  ta.value = node.onEnter || '';
+  ta.value = node[field] || '';
   syncHighlight(ta, code);
 
   ta.addEventListener('input', () => {
-    node.onEnter = ta.value;
+    node[field] = ta.value;
     syncHighlight(ta, code);
     renderWorld();   // not renderProps → keep textarea focus
     persist();
@@ -872,6 +932,7 @@ function updateId(oldId, newId) {
   for (const m of state.nodes) {
     for (const k of ['A','B','C','D']) if (m.choices[k] === oldId) m.choices[k] = newId;
     if (m.pinSuccess === oldId) m.pinSuccess = newId;
+    if (m.nfcSuccess === oldId) m.nfcSuccess = newId;
     if (m.next === oldId) m.next = newId;
     for (const t of m.mapTargets) if (t.target === oldId) t.target = newId;
   }
@@ -1046,6 +1107,8 @@ function setupEvents() {
           n.choices[drag.from.key] = targetId;
         } else if (drag.from.kind === 'pin') {
           n.pinSuccess = targetId;
+        } else if (drag.from.kind === 'nfc') {
+          n.nfcSuccess = targetId;
         } else if (drag.from.kind === 'next') {
           n.next = targetId;
         } else if (drag.from.kind === 'map') {
@@ -1148,6 +1211,7 @@ function tidy() {
       if (n.choicesEnabled?.[k] && n.choices[k] !== null) outs.push(n.choices[k]);
     }
     if (n.expectedPin && n.pinSuccess !== null) outs.push(n.pinSuccess);
+    if (n.expectedNfc && n.nfcSuccess !== null) outs.push(n.nfcSuccess);
     for (const t of n.mapTargets) if (t.target !== null) outs.push(t.target);
     return outs;
   };
@@ -1206,9 +1270,11 @@ function estimateNodeHeight(n) {
   if (n.nextEnabled) h += ROW;
   for (const k of ['A','B','C','D']) if (n.choicesEnabled?.[k]) h += ROW;
   if (n.expectedPin) h += ROW;
+  if (n.expectedNfc) h += ROW;
   if (n.activateMap || n.mapTargets.length > 0 || n.mapBlockers.length > 0) {
     h += 24 + (n.mapTargets.length + n.mapBlockers.length) * ROW;
   }
+  if (n.onNfc && n.onNfc.trim()) h += 24;
   if (n.onEnter && n.onEnter.trim()) h += 24;
   return h + 10;
 }
@@ -1271,6 +1337,9 @@ function handleImport(e) {
           mapBlockers:  (n.mapBlockers || []).map(b => ({ x: b.x ?? 0, y: b.y ?? 0 })),
           expectedPin:  n.expectedPin || '',
           pinSuccess:   n.pinSuccess ?? null,
+          expectedNfc:  n.expectedNfc || '',
+          nfcSuccess:   n.nfcSuccess ?? null,
+          onNfc:        n.onNfc      || '',
           onEnter:      n.onEnter    || '',
         };
       });
@@ -1307,6 +1376,7 @@ function generateCpp() {
   out.push('// =============================================================');
   out.push('#include "story.h"');
   out.push('#include "map.h"');
+  out.push('#include "nfc.h"');
   out.push('');
 
   // Forward declarations so literals can reference each other.
@@ -1321,6 +1391,20 @@ function generateCpp() {
   for (const n of withBody) {
     out.push(`static void ${onEnterName(n)}() {`);
     for (const line of n.onEnter.replace(/\r/g, '').replace(/\s+$/, '').split('\n')) {
+      out.push(line.trim() === '' ? '' : '  ' + line);
+    }
+    out.push('}');
+    out.push('');
+  }
+  out.push('');
+
+  // onNfc callbacks — defined before the literals that reference them.
+  out.push('// ---- onNfc callbacks ----');
+  const withNfcBody = state.nodes.filter(hasOnNfcBody);
+  if (withNfcBody.length === 0) out.push('// (none)');
+  for (const n of withNfcBody) {
+    out.push(`static void ${onNfcName(n)}(const char* tagText) {`);
+    for (const line of n.onNfc.replace(/\r/g, '').replace(/\s+$/, '').split('\n')) {
       out.push(line.trim() === '' ? '' : '  ' + line);
     }
     out.push('}');
@@ -1378,13 +1462,15 @@ function cppForNode(n) {
   const hasNext    = !!(n.nextEnabled && n.next !== null && n.next !== undefined);
   const hasMap     = n.activateMap || mapEntries.length > 0;
   const hasPin     = !!(n.expectedPin && n.pinSuccess !== null);
+  const hasNfc     = !!(n.expectedNfc && n.nfcSuccess !== null);
+  const hasOnNfc   = hasOnNfcBody(n);
   const hasOnEnter = hasOnEnterBody(n);
 
   // --- next / choices prefix ---
   if (hasNext) {
     // Direct-transition node. GOTO sets .next; choices are ignored at runtime.
     lines.push(`    GOTO(${ref(n.next)}),`);
-    if (hasMap || hasPin || hasOnEnter) {
+    if (hasMap || hasPin || hasNfc || hasOnNfc || hasOnEnter) {
       // Bridge past the choice fields explicitly — can't use CHOICES here since
       // that macro also sets .next (= would clobber GOTO).
       lines.push(`    .choiceA = nullptr, .choiceB = nullptr, .choiceC = nullptr, .choiceD = nullptr,`);
@@ -1413,7 +1499,7 @@ function cppForNode(n) {
       lines.push(`    .mapTargetCount = 0,`);
       lines.push(`    .mapTargets = nullptr,`);
     }
-  } else if (hasPin || hasOnEnter) {
+  } else if (hasPin || hasNfc || hasOnNfc || hasOnEnter) {
     // Need gap-filler so we can reach later fields
     lines.push(`    MAP_OFF,`);
   }
@@ -1421,10 +1507,24 @@ function cppForNode(n) {
   // PIN section
   if (hasPin) {
     lines.push(`    PIN(${cppString(n.expectedPin)}, &${getNode(n.pinSuccess).name}),`);
-  } else if (hasOnEnter) {
-    // Gap-fill PIN fields so we can reach .onEnter
+  } else if (hasNfc || hasOnNfc || hasOnEnter) {
+    // Gap-fill PIN fields so we can reach later fields
     lines.push(`    .expectedPin = nullptr,`);
     lines.push(`    .pinSuccess = nullptr,`);
+  }
+
+  // NFC section
+  if (hasNfc) {
+    lines.push(`    NFC(${cppString(n.expectedNfc)}, &${getNode(n.nfcSuccess).name}),`);
+  } else if (hasOnNfc || hasOnEnter) {
+    // Gap-fill NFC gate fields so we can reach later fields
+    lines.push(`    .expectedNfc = nullptr,`);
+    lines.push(`    .nfcSuccess = nullptr,`);
+  }
+  if (hasOnNfc) {
+    lines.push(`    .onNfc = ${onNfcName(n)},`);
+  } else if (hasOnEnter) {
+    lines.push(`    .onNfc = nullptr,`);
   }
 
   // onEnter
@@ -1440,8 +1540,16 @@ function hasOnEnterBody(n) {
   return !!(n.onEnter && n.onEnter.trim());
 }
 
+function hasOnNfcBody(n) {
+  return !!(n.onNfc && n.onNfc.trim());
+}
+
 function onEnterName(n) {
   return 'onEnter_' + cppIdent(n.name);
+}
+
+function onNfcName(n) {
+  return 'onNfc_' + cppIdent(n.name);
 }
 
 function textName(n) {

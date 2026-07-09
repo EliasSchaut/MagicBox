@@ -60,10 +60,28 @@ Direction readJoystrickDirection() {
 };
 // --------------
 
+
+// --------------
+// RFID (MFRC522)
+// --------------
+/*
+ Uses the Mega's hardware SPI bus (fixed pins):
+ pin 50 is connected to MISO
+ pin 51 is connected to MOSI
+ pin 52 is connected to SCK
+ Configurable pins below. Power the RC522 from 3.3V (NOT 5V)!
+ */
+const byte RFID_SS_PIN = 53;  // SDA/SS (Mega hardware SS pin)
+const byte RFID_RST_PIN = 49; // RST
+MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);
+// --------------
+
 void setupHardware() {
     lc.shutdown(0, false);
     lc.setIntensity(0, 8);
     lc.clearDisplay(0);
     pinMode(JoySW, INPUT);
     digitalWrite(JoySW, HIGH);
+    SPI.begin();
+    rfid.PCD_Init();
 };

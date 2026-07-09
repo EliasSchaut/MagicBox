@@ -14,6 +14,10 @@ void setup() {
 }
 
 void loop() {
+    // Poll NFC before mapWalk: mapWalk can delay() on a move, and polling
+    // first keeps worst-case tag latency at one map step.
+    nfcPoll();
+
     mapWalk();
 
     char key = customKeypad.getKey();

@@ -14,32 +14,44 @@ extern StoryNode startNode, forestNode, caveNode, safeNode, treasureNode, leaveN
 // ---- onEnter callbacks ----
 // (none)
 
+// ---- onNfc callbacks ----
+// (none)
+
+// ---- display texts (stored in flash / PROGMEM, not RAM) ----
+const char T_startNode[] PROGMEM = "You are in a room. A) Door B) Window C) Safe";
+const char T_forestNode[] PROGMEM = "The forest is dark. Walk to the glowing point on the map, or B) Go back";
+const char T_caveNode[] PROGMEM = "It's a smelly cave. Walk to the glowing point to leave, or B) Go back";
+const char T_safeNode[] PROGMEM = "A locked safe. Enter PIN as *NNNN# (hint: 1234). B) Back";
+const char T_treasureNode[] PROGMEM = "The safe pops open. You found gold! A) Leave";
+const char T_leaveNode[] PROGMEM = "You pocket the gold and head back...";
+
 // ---- nodes ----
 // Fully declarative; only the fields you set matter (rest = nullptr/false/0).
-// See the authoring macros in types.h (CHOICES, GOTO, MAP_TARGETS, MAP_OFF, PIN).
+// See the authoring macros in types.h (CHOICES, GOTO, MAP_TARGETS, MAP_OFF,
+// PIN, NFC, NFC_OFF).
 StoryNode startNode = {
     .id = 0,
-    .display = "You are in a room. A) Door B) Window C) Safe",
+    .display = FSTR(T_startNode),
     CHOICES(&forestNode, &caveNode, &safeNode, nullptr),
 };
 
 StoryNode forestNode = {
     .id = 1,
-    .display = "The forest is dark. Walk to the glowing point on the map, or B) Go back",
+    .display = FSTR(T_forestNode),
     CHOICES(nullptr, &startNode, nullptr, nullptr),
     MAP_TARGETS({4, 4, 2}),
 };
 
 StoryNode caveNode = {
     .id = 2,
-    .display = "It's a smelly cave. Walk to the glowing point to leave, or B) Go back",
+    .display = FSTR(T_caveNode),
     CHOICES(nullptr, &startNode, nullptr, nullptr),
     MAP_TARGETS({4, 4, 0}),
 };
 
 StoryNode safeNode = {
     .id = 3,
-    .display = "A locked safe. Enter PIN as *NNNN# (hint: 1234). B) Back",
+    .display = FSTR(T_safeNode),
     CHOICES(nullptr, &startNode, nullptr, nullptr),
     MAP_OFF,
     PIN("1234", &treasureNode),
@@ -47,7 +59,7 @@ StoryNode safeNode = {
 
 StoryNode treasureNode = {
     .id = 4,
-    .display = "The safe pops open. You found gold! A) Leave",
+    .display = FSTR(T_treasureNode),
     CHOICES(&leaveNode, nullptr, nullptr, nullptr),
 };
 
@@ -55,7 +67,7 @@ StoryNode treasureNode = {
 // startNode without waiting for input.
 StoryNode leaveNode = {
     .id = 5,
-    .display = "You pocket the gold and head back...",
+    .display = FSTR(T_leaveNode),
     GOTO(&startNode),
 };
 

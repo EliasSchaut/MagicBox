@@ -16,6 +16,7 @@ public:
     StoryNode* getCurrentNode() const { return currentNode; }
     void handleChoice(Choice choice);
     void handlePin(const char* pin);
+    void handleNfc(const char* text);
 
 private:
     StoryNode* nodes[64]{}; // Max story nodes (id->pointer registry for findNodeByID)
@@ -23,6 +24,7 @@ private:
     StoryNode* currentNode;
     StoryNode* findNodeByID(int id);
     void enterNode(StoryNode* node);
+    void armNfc();
 };
 
 // Node literals live in src/story_content.cpp and reference each other via
@@ -34,6 +36,7 @@ void storyBegin();
 void printWrongChoice();
 void handleChoice(Choice choice);
 void handlePin(const char* pin);
+void handleNfc(const char* text);
 void setGameState(int state);
 
 // Jump to the saved node from a previous power cycle if one exists for THIS

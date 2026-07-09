@@ -7,6 +7,7 @@
 
 #include "hardware.h"
 #include "map.h"
+#include "nfc.h"
 #include "utils.h"
 #include "story.h"
 

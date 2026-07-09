@@ -24,10 +24,11 @@ The single configured environment is `[env:megaatmega2560]` in `platformio.ini` 
 
 ## Architecture
 
-The runtime has two concurrent surfaces driven from `loop()` in `src/main.cpp`:
+The runtime has three concurrent surfaces driven from `loop()` in `src/main.cpp`:
 
 1. **Story engine** — keypad input is mapped to a `Choice` (A/B/C/D) or a PIN and dispatched to a `StoryGraph`. Story text is rendered over `Serial`.
 2. **Map minigame** — joystick moves a lit pixel on the 8×8 LED matrix; target pixels blink. Polled every loop iteration. Only active while a story node enabled it.
+3. **NFC reader** — `nfcPoll()` runs first in every loop iteration (before `mapWalk()`, which can `delay()`). Only does radio work while a read/write request is pending.
 
 `handleInput()` in `main.cpp` also runs the **PIN buffer**: `*` starts/resets capture, digits accumulate, `#` submits the digits since the last `*` to `handlePin()` (so `*234*4652#` → `4652`, `2345#` → ignored).
 
@@ -42,9 +43,10 @@ Author nodes with designated initializers + the macros in `types.h`:
 - `CHOICES(a,b,c,d)` — the four choice targets (`nullptr` = invalid → `printWrongChoice()`). Implicitly sets `.next = nullptr`. `NO_CHOICES` = all `nullptr`.
 - `GOTO(&node)` — **direct transition**: after the display text, auto-advance to `node` without input (used to merge branches). `enterNode` follows the `next` chain in a loop (guarded to 64 hops).
 - `MAP_TARGETS({x,y,storyID}, …)` — activate the map + register blinking targets; `MAP_OFF` is the explicit gap-filler. `PIN("1234", &successNode)` — PIN entry.
+- `NFC("TEXT", &successNode)` — NFC tag gate (sets `expectedNfc`/`nfcSuccess`, see below); `NFC_OFF` is the gap-filler needed when `.onEnter` is set without NFC. The NFC fields sit between `pinSuccess` and `onEnter` in the struct; `onEnter` stays last.
 - `.display` is a `const __FlashStringHelper*` pointing into **flash** (not RAM — keeps long paragraphs out of the 8 KB SRAM). Author it as `.display = FSTR(T_node)` with a preceding `const char T_node[] PROGMEM = "...";`. The editor's "Export C++" emits one PROGMEM array per node automatically.
 
-`enterNode()` on each transition: `mapDisable()` → print display → apply map config → run optional `onEnter` (escape-hatch callback, e.g. `mapTeleportPlayer(x,y)`) → follow `next` → **save the resting node id to EEPROM**.
+`enterNode()` on each transition: `nfcCancel()` → `mapDisable()` → print display → apply map config → run optional `onEnter` (escape-hatch callback, e.g. `mapTeleportPlayer(x,y)`) → follow `next` → arm NFC for the resting node → **save the resting node id to EEPROM**.
 
 ### Progress persistence (EEPROM)
 
@@ -56,6 +58,15 @@ Author nodes with designated initializers + the macros in `types.h`:
 
 **Blockers** are map cells with `storyID == MAP_BLOCK` (sentinel `-1`), stored in the same table as targets: they render **constant-lit** (no blink), the player cannot walk onto them, and they trigger no story. Set via `mapSetBlocker(x,y)` / declaratively via `MAP_TARGETS({x,y,MAP_BLOCK})`; remove with `mapRemoveBlocker(x,y)` or `mapClearBlockers()` (clears only blockers, keeps real targets). The editor has a "Map blockers" list per node that exports as `MAP_BLOCK` entries.
 
+### NFC (MFRC522)
+
+`nfc.cpp`/`nfc.h` wrap the RC522 reader (vendored `lib/rfid`, hardware SPI: MISO 50 / MOSI 51 / SCK 52, SS 53 / RST 49 in `hardware.cpp`, **3.3 V supply**) as an async request/callback module:
+
+- `nfcRequestRead(cb)` / `nfcRequestWrite(text, cb)` arm a pending operation (replacing any previous one); `nfcPoll()` executes it against the next presented tag and fires the callback. `nfcCancel()`, `nfcBusy()` round out the API.
+- **Tag payload**: 16 bytes, null-terminated text, max 15 chars (`NFC_TEXT_MAX`). Supported tags are auto-detected via SAK: MIFARE Classic Mini/1K/4K (block 4 = sector 1, factory key A `FF×6`, `PCD_StopCrypto1()` after every transaction) and NTAG/Ultralight (pages 4–7, no auth; NTAG stickers can be written with a phone app).
+- **Errors keep the request armed** (retry with another tag); the write callback only ever fires with `success == true`. A 2 s same-tag cooldown stops a tag resting on the reader from re-triggering.
+- **Story integration** (`story.cpp`): after each transition the resting node arms a read iff it has `expectedNfc` or `onNfc` — unless something (e.g. `onEnter`) already requested a write, which takes priority; reads then re-arm on the next transition. On a read, precedence is: `onNfc(text)` fires first (sees every tag, may transition — then the old node's gate is skipped) → `expectedNfc` gate (`strcmp` match → `enterNode(nfcSuccess)`) → no transition → re-arm.
+
 ### Types
 
 `include/types.h` is the shared vocabulary: `Direction`, `Position` (bounds-checked `move()` clamped 0–7), `Choice`, `MapTarget`, and `StoryNode` (a plain aggregate — see macros above). Inline helpers (`charToChoice`, `printSerial`, `printSerialBlock`, `printDirection`) are header-only in `include/utils.h`.
@@ -66,7 +77,7 @@ Author nodes with designated initializers + the macros in `types.h`:
 
 ### Libraries
 
-`lib/` holds **vendored** library sources (Keypad, LedControl, plus several currently-unused sensors/actuators: DHT, DS3231, HC-SR04, IRremote, LiquidCrystal, MPU6050, QMI8658C, Servo, Stepper, pitches, rfid). PlatformIO's LDF picks them up automatically; don't add them as `lib_deps` in `platformio.ini`. Only Keypad and LedControl are linked from the current source.
+`lib/` holds **vendored** library sources (Keypad, LedControl, rfid/MFRC522, plus several currently-unused sensors/actuators: DHT, DS3231, HC-SR04, IRremote, LiquidCrystal, MPU6050, QMI8658C, Servo, Stepper, pitches). PlatformIO's LDF picks them up automatically (incl. the framework `SPI` lib via MFRC522's include); don't add them as `lib_deps` in `platformio.ini`. Keypad, LedControl and rfid are linked from the current source.
 
 ## Conventions
 

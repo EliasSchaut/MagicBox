@@ -3,6 +3,7 @@
 
 #include <Keypad.h>
 #include <LedControl.h>
+#include <MFRC522.h>
 #include "types.h"
 
 // Keypad
@@ -10,6 +11,9 @@ extern Keypad customKeypad;
 
 // LED Matrix
 extern LedControl lc;
+
+// RFID reader (MFRC522, hardware SPI)
+extern MFRC522 rfid;
 
 // Joystick
 struct JoystickData {
