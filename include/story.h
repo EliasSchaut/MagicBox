@@ -17,6 +17,7 @@ public:
     void handleChoice(Choice choice);
     void handlePin(const char* pin);
     void handleNfc(const char* text);
+    void handleNfcWritten();
 
 private:
     StoryNode* nodes[64]{}; // Max story nodes (id->pointer registry for findNodeByID)

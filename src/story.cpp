@@ -110,13 +110,39 @@ void StoryGraph::enterNode(StoryNode* node) {
   if (currentNode) saveProgress(currentNode->id);
 }
 
+namespace {
+  void nfcWriteDone(bool) { storyGraph.handleNfcWritten(); }
+}
+
 void StoryGraph::armNfc() {
   // A write requested by onEnter/onNfc takes priority — don't clobber it.
   // Reads for this node are then only armed on the next transition.
   if (nfcBusy()) return;
-  if (currentNode && (currentNode->expectedNfc || currentNode->onNfc)) {
+  if (!currentNode) return;
+
+  // Write mode: every presented tag gets nfcWriteText written. Takes priority
+  // over the tag gate / onNfc of the same node.
+  if (currentNode->nfcWriteText) {
+    printSerial(F("Schreibe "));
+    printSerial(currentNode->nfcWriteText);
+    printSerial(F(" (Chip dranhalten)\n"));
+    nfcRequestWrite(currentNode->nfcWriteText, &nfcWriteDone);
+    return;
+  }
+
+  if (currentNode->expectedNfc || currentNode->onNfc) {
     nfcRequestRead(&::handleNfc); // free-function wrapper matches NfcReadCallback
   }
+}
+
+void StoryGraph::handleNfcWritten() {
+  if (currentNode && currentNode->nfcWriteText) {
+    printSerial(currentNode->nfcWriteText);
+    printSerial(F(" geschrieben\n"));
+  }
+  // Re-arm: in write mode the node keeps writing every tag that comes close
+  // (the same-tag cooldown in nfc.cpp prevents immediate re-triggering).
+  armNfc();
 }
 
 void StoryGraph::jumpToNode(int id) {

@@ -52,7 +52,7 @@ pio device monitor -b 9600 # play over serial
 
 - Pan/zoom canvas; nodes are boxes you drag around, with **Tidy** auto-layout.
 - Drag from a node's output ports to wire choices, PIN success, NFC success, map targets, and direct transitions.
-- Per-node props panel for id, display text, map config, PIN, NFC tag text, and syntax-highlighted `onNfc` / `onEnter` C++ snippets.
+- Per-node props panel for id, display text, map config, PIN, NFC tag text (gate + write-to-tag), and syntax-highlighted `onNfc` / `onEnter` C++ snippets.
 - **Export C++** emits the `StoryNode` literals + `storyBegin()` ready to paste into `src/story.cpp`; **JSON** import/export round-trips the full editor state (incl. node positions). Auto-saves to `localStorage`. Dark/light mode.
 
 More detail in [`CLAUDE.md`](./CLAUDE.md).

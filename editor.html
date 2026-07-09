@@ -280,7 +280,7 @@
 // State
 // ============================================================
 const state = {
-  nodes: [],                          // [{id, name, x, y, display, choices:{A,B,C,D}, activateMap, mapTargets:[{x,y,target}], expectedPin, pinSuccess, expectedNfc, nfcSuccess, onNfc, onEnter}]
+  nodes: [],                          // [{id, name, x, y, display, choices:{A,B,C,D}, activateMap, mapTargets:[{x,y,target}], expectedPin, pinSuccess, expectedNfc, nfcSuccess, nfcWriteText, onNfc, onEnter}]
   startNodeId: null,
   selectedNodeId: null,
   view: { panX: 0, panY: 0, zoom: 1 },
@@ -331,6 +331,7 @@ function migrateNode(n) {
   if (!Array.isArray(n.mapBlockers)) n.mapBlockers = [];
   if (n.expectedNfc === undefined) n.expectedNfc = '';
   if (n.nfcSuccess === undefined) n.nfcSuccess = null;
+  if (n.nfcWriteText === undefined) n.nfcWriteText = '';
   if (n.onNfc === undefined) n.onNfc = '';
 }
 
@@ -376,6 +377,7 @@ function makeNode(x, y) {
     pinSuccess: null,
     expectedNfc: '',
     nfcSuccess: null,
+    nfcWriteText: '',
     onNfc: '',
     onEnter: '',
   };
@@ -564,6 +566,18 @@ function renderNode(node) {
     p.dataset.outNode = node.id;
     p.dataset.outKind = 'nfc';
     row.appendChild(p);
+    el.appendChild(row);
+  }
+
+  // NFC write section (no port — writing doesn't link to a node)
+  if (node.nfcWriteText) {
+    const row = document.createElement('div');
+    row.className = 'row border-t border-slate-200 dark:border-slate-700 mt-1 pt-2';
+    row.innerHTML = `
+      <span class="text-cyan-500">✍</span>
+      <span class="font-mono text-[11px]">"${esc(node.nfcWriteText)}"</span>
+      <span class="meta">write to tag</span>
+    `;
     el.appendChild(row);
   }
 
@@ -833,6 +847,10 @@ function renderProps() {
     <label class="block text-xs mb-1">Expected tag text (empty = no NFC gate, max 15 chars)</label>
     <input type="text" maxlength="15" value="${esc(n.expectedNfc || '')}" oninput="update(${n.id}, 'expectedNfc', this.value)" placeholder="e.g. SCHATZ" class="mb-2">
     ${n.expectedNfc ? `<p class="text-[11px] text-slate-500 dark:text-slate-400">Drag from NFC port (💳) on the node to set the success target.</p>` : ''}
+
+    <label class="block text-xs mb-1 mt-2">Write to tag (✍ every presented tag gets this text, max 15 chars)</label>
+    <input type="text" maxlength="15" value="${esc(n.nfcWriteText || '')}" oninput="update(${n.id}, 'nfcWriteText', this.value)" placeholder="e.g. GOLD" class="mb-2">
+    ${n.nfcWriteText ? `<p class="text-[11px] text-slate-500 dark:text-slate-400">Prints "Schreibe … (Chip dranhalten)" on enter and "… geschrieben" per tag. Takes priority over the NFC gate / onNfc of this node.</p>` : ''}
 
     <h3 class="font-semibold text-xs mb-2 mt-3 border-t border-slate-200 dark:border-slate-700 pt-3">onNfc (custom C++)</h3>
     <p class="text-[11px] text-slate-500 dark:text-slate-400 mb-2">
@@ -1271,6 +1289,7 @@ function estimateNodeHeight(n) {
   for (const k of ['A','B','C','D']) if (n.choicesEnabled?.[k]) h += ROW;
   if (n.expectedPin) h += ROW;
   if (n.expectedNfc) h += ROW;
+  if (n.nfcWriteText) h += ROW;
   if (n.activateMap || n.mapTargets.length > 0 || n.mapBlockers.length > 0) {
     h += 24 + (n.mapTargets.length + n.mapBlockers.length) * ROW;
   }
@@ -1339,6 +1358,7 @@ function handleImport(e) {
           pinSuccess:   n.pinSuccess ?? null,
           expectedNfc:  n.expectedNfc || '',
           nfcSuccess:   n.nfcSuccess ?? null,
+          nfcWriteText: n.nfcWriteText || '',
           onNfc:        n.onNfc      || '',
           onEnter:      n.onEnter    || '',
         };
@@ -1461,16 +1481,17 @@ function cppForNode(n) {
   ];
   const hasNext    = !!(n.nextEnabled && n.next !== null && n.next !== undefined);
   const hasMap     = n.activateMap || mapEntries.length > 0;
-  const hasPin     = !!(n.expectedPin && n.pinSuccess !== null);
-  const hasNfc     = !!(n.expectedNfc && n.nfcSuccess !== null);
-  const hasOnNfc   = hasOnNfcBody(n);
-  const hasOnEnter = hasOnEnterBody(n);
+  const hasPin      = !!(n.expectedPin && n.pinSuccess !== null);
+  const hasNfc      = !!(n.expectedNfc && n.nfcSuccess !== null);
+  const hasNfcWrite = !!n.nfcWriteText;
+  const hasOnNfc    = hasOnNfcBody(n);
+  const hasOnEnter  = hasOnEnterBody(n);
 
   // --- next / choices prefix ---
   if (hasNext) {
     // Direct-transition node. GOTO sets .next; choices are ignored at runtime.
     lines.push(`    GOTO(${ref(n.next)}),`);
-    if (hasMap || hasPin || hasNfc || hasOnNfc || hasOnEnter) {
+    if (hasMap || hasPin || hasNfc || hasNfcWrite || hasOnNfc || hasOnEnter) {
       // Bridge past the choice fields explicitly — can't use CHOICES here since
       // that macro also sets .next (= would clobber GOTO).
       lines.push(`    .choiceA = nullptr, .choiceB = nullptr, .choiceC = nullptr, .choiceD = nullptr,`);
@@ -1499,7 +1520,7 @@ function cppForNode(n) {
       lines.push(`    .mapTargetCount = 0,`);
       lines.push(`    .mapTargets = nullptr,`);
     }
-  } else if (hasPin || hasNfc || hasOnNfc || hasOnEnter) {
+  } else if (hasPin || hasNfc || hasNfcWrite || hasOnNfc || hasOnEnter) {
     // Need gap-filler so we can reach later fields
     lines.push(`    MAP_OFF,`);
   }
@@ -1507,7 +1528,7 @@ function cppForNode(n) {
   // PIN section
   if (hasPin) {
     lines.push(`    PIN(${cppString(n.expectedPin)}, &${getNode(n.pinSuccess).name}),`);
-  } else if (hasNfc || hasOnNfc || hasOnEnter) {
+  } else if (hasNfc || hasNfcWrite || hasOnNfc || hasOnEnter) {
     // Gap-fill PIN fields so we can reach later fields
     lines.push(`    .expectedPin = nullptr,`);
     lines.push(`    .pinSuccess = nullptr,`);
@@ -1516,10 +1537,15 @@ function cppForNode(n) {
   // NFC section
   if (hasNfc) {
     lines.push(`    NFC(${cppString(n.expectedNfc)}, &${getNode(n.nfcSuccess).name}),`);
-  } else if (hasOnNfc || hasOnEnter) {
+  } else if (hasNfcWrite || hasOnNfc || hasOnEnter) {
     // Gap-fill NFC gate fields so we can reach later fields
     lines.push(`    .expectedNfc = nullptr,`);
     lines.push(`    .nfcSuccess = nullptr,`);
+  }
+  if (hasNfcWrite) {
+    lines.push(`    NFC_WRITE(${cppString(n.nfcWriteText)}),`);
+  } else if (hasOnNfc || hasOnEnter) {
+    lines.push(`    .nfcWriteText = nullptr,`);
   }
   if (hasOnNfc) {
     lines.push(`    .onNfc = ${onNfcName(n)},`);

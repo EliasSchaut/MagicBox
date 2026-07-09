@@ -100,6 +100,12 @@ struct StoryNode {
     const char* expectedNfc;
     StoryNode* nfcSuccess;
 
+    // NFC write mode — while resting on this node, EVERY presented tag gets
+    // this text written (prompt/success messages over Serial, re-armed after
+    // each write). Takes priority over the tag gate / onNfc of the same node.
+    // Authored via NFC_WRITE("TEXT"). Max 15 chars (NFC_TEXT_MAX).
+    const char* nfcWriteText;
+
     // Called with the tag text for ANY tag read while resting on this node,
     // BEFORE the expectedNfc check. Escape hatch for custom tag logic, e.g.
     // nfcRequestWrite(...). May transition the story itself.
@@ -159,11 +165,16 @@ struct StoryNode {
 #define NFC(expected, successNode) \
     .expectedNfc = (expected), .nfcSuccess = (successNode)
 
+// NFC write mode: write `text` to every tag presented while on this node.
+#define NFC_WRITE(text) \
+    .nfcWriteText = (text)
+
 // Explicit "no NFC on this node" gap-filler — only needed when .onEnter must
 // be set on a node without NFC (contiguous-prefix rule, see MAP_OFF).
 #define NFC_OFF \
     .expectedNfc = nullptr, \
     .nfcSuccess = nullptr, \
+    .nfcWriteText = nullptr, \
     .onNfc = nullptr
 
 #endif //MAGICBOX_TYPES_H
